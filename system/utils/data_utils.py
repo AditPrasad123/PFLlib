@@ -38,6 +38,9 @@ def read_client_data(dataset, idx, is_train=True, few_shot=0):
 
 def process_image(data):
     X = torch.Tensor(data['x']).type(torch.float32)
+    # Transpose from (batch, H, W, C) to (batch, C, H, W) if needed
+    if X.dim() == 4 and X.shape[-1] == 3:
+        X = X.permute(0, 3, 1, 2)
     y = torch.Tensor(data['y']).type(torch.int64)
     return [(x, y) for x, y in zip(X, y)]
 

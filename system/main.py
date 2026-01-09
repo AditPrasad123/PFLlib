@@ -394,7 +394,8 @@ if __name__ == "__main__":
                         choices=["cpu", "cuda"])
     parser.add_argument('-did', "--device_id", type=str, default="0")
     parser.add_argument('-data', "--dataset", type=str, default="MNIST")
-    parser.add_argument('-ncl', "--num_classes", type=int, default=10)
+    parser.add_argument('-ncl', "--num_classes", type=int, default=-1,
+                        help="Number of classes. If -1, auto-detect from dataset config.")
     parser.add_argument('-m', "--model", type=str, default="CNN")
     parser.add_argument('-lbs', "--batch_size", type=int, default=10)
     parser.add_argument('-lr', "--local_learning_rate", type=float, default=0.005,
@@ -502,6 +503,19 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     os.environ["CUDA_VISIBLE_DEVICES"] = args.device_id
+
+    # Auto-detect num_classes from dataset config if not specified
+    if args.num_classes == -1:
+        import json
+        config_path = os.path.join('../dataset', args.dataset, 'config.json')
+        if os.path.exists(config_path):
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+                args.num_classes = config.get('num_classes', 10)
+                print(f"Auto-detected num_classes={args.num_classes} from {args.dataset} config.")
+        else:
+            args.num_classes = 10
+            print(f"Config not found; using default num_classes=10.")
 
     if args.device == "cuda" and not torch.cuda.is_available():
         print("\ncuda is not avaiable.\n")
