@@ -145,6 +145,62 @@ def run(args):
             # args.model = mobilenet_v2(pretrained=True).to(args.device)
             # feature_dim = list(args.model.fc.parameters())[0].shape[1]
             # args.model.fc = nn.Linear(feature_dim, args.num_classes).to(args.device)
+        
+        elif model_str == "TinyViT":
+            # Load the Tiny-ViT model hosted on Hugging Face via timm
+            try:
+                import timm
+            except Exception:
+                raise ImportError("Please install timm and huggingface-hub: pip install timm huggingface-hub")
+
+            # model name on HF: 'timm/tiny_vit_5m_224.dist_in22k'
+            # timm accepts the model name (without 'timm/') for create_model
+            model_name = 'tiny_vit_5m_224.dist_in22k'
+            # Create model without forcing classifier; we'll reset appropriately
+            args.model = timm.create_model(model_name, pretrained=True)
+
+            # Try to reset classifier properly (timm models provide reset_classifier)
+            try:
+                if hasattr(args.model, 'reset_classifier'):
+                    args.model.reset_classifier(args.num_classes)
+                else:
+                    raise AttributeError
+            except Exception:
+                # Fallback: try to infer feature dim and set a Linear head
+                nf = getattr(args.model, 'num_features', None)
+                if nf is None:
+                    # try to inspect existing head
+                    for attr in ('head', 'fc', 'classifier'):
+                        if hasattr(args.model, attr):
+                            mod = getattr(args.model, attr)
+                            # try to get in_features from a linear layer
+                            if hasattr(mod, 'in_features'):
+                                nf = mod.in_features
+                                break
+                            # try common submodules
+                            if hasattr(mod, 'weight') and getattr(mod, 'weight').ndim == 2:
+                                nf = mod.weight.shape[1]
+                                break
+
+                if nf is None:
+                    raise RuntimeError('Unable to determine feature dimension for TinyViT classifier. Update the code to match model API.')
+
+                # attach a simple linear head compatible with BaseHeadSplit
+                args.model.fc = nn.Linear(nf, args.num_classes)
+
+            # If the timm model exposes a conv-style `head` (common), detach it so base returns feature maps
+            if hasattr(args.model, 'head'):
+                # preserve original conv-style head as fc for downstream code
+                orig_head = args.model.head
+                args.model.head = nn.Identity()
+                args.model.fc = orig_head
+            else:
+                # ensure `.fc` attribute exists for downstream code (copying head)
+                if not hasattr(args.model, 'fc'):
+                    if hasattr(args.model, 'classifier'):
+                        args.model.fc = args.model.classifier
+
+            args.model = args.model.to(args.device)
             
         elif model_str == "LSTM":
             args.model = LSTMNet(hidden_dim=args.feature_dim, vocab_size=args.vocab_size, num_classes=args.num_classes).to(args.device)
@@ -181,6 +237,27 @@ def run(args):
             raise NotImplementedError
 
         print(args.model)
+
+        # Optionally freeze backbone weights and train only the classification head
+        if getattr(args, 'freeze_backbone', False):
+            print("Freezing backbone parameters; only the head will be trained.")
+            # Identify head attribute (common names)
+            head_attr = None
+            for name in ('fc', 'head', 'classifier'):
+                if hasattr(args.model, name):
+                    head_attr = getattr(args.model, name)
+                    break
+
+            # Freeze all params
+            for p in args.model.parameters():
+                p.requires_grad = False
+
+            # Unfreeze head params if found
+            if head_attr is not None:
+                for p in head_attr.parameters():
+                    p.requires_grad = True
+            else:
+                print('Warning: could not find model head attribute to unfreeze (expected fc/head/classifier).')
 
         # select algorithm
         if args.algorithm == "FedAvg":
@@ -473,6 +550,9 @@ if __name__ == "__main__":
     # APPLE
     parser.add_argument('-dlr', "--dr_learning_rate", type=float, default=0.0)
     parser.add_argument('-L', "--L", type=float, default=1.0)
+    # freeze pretrained backbone and train only the head
+    parser.add_argument('-fb', "--freeze_backbone", type=bool, default=False,
+                        help="Freeze pretrained backbone weights and train only the head")
     # FedGen
     parser.add_argument('-nd', "--noise_dim", type=int, default=512)
     parser.add_argument('-glr', "--generator_learning_rate", type=float, default=0.005)
