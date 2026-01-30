@@ -65,7 +65,7 @@ class Client(object):
                 if labels_array is not None and labels_array.size > 0:
                     counts = np.bincount(labels_array, minlength=self.num_classes)
                     counts = np.where(counts == 0, 1, counts)
-                    weights = (labels_array.size) / (self.num_classes * counts)
+                    weights = np.sqrt((labels_array.size) / (self.num_classes * counts))
                     class_weights_tensor = torch.tensor(weights, dtype=torch.float32, device=self.device)
             except Exception:
                 class_weights_tensor = None
@@ -82,7 +82,7 @@ class Client(object):
                 self.loss = nn.CrossEntropyLoss(weight=class_weights_tensor)
         # Only include parameters that require gradients (useful when backbone is frozen)
         trainable_params = filter(lambda p: p.requires_grad, self.model.parameters())
-        self.optimizer = torch.optim.SGD(trainable_params, lr=self.learning_rate)
+        self.optimizer = torch.optim.SGD(trainable_params, lr=self.learning_rate, momentum=args.momentum)
         self.learning_rate_scheduler = torch.optim.lr_scheduler.ExponentialLR(
             optimizer=self.optimizer, 
             gamma=args.learning_rate_decay_gamma
@@ -225,3 +225,27 @@ class FocalLoss(nn.Module):
     # @staticmethod
     # def model_exists():
     #     return os.path.exists(os.path.join("models", "server" + ".pt"))
+    def test_time_finetune(self):
+        self.model.train()
+
+        # Freeze everything except classifier
+        for p in self.model.parameters():
+            p.requires_grad = False
+        for p in self.model.head.parameters():
+            p.requires_grad = True
+
+        optimizer = torch.optim.SGD(
+            self.model.head.parameters(),
+            lr=1e-3,
+            momentum=0.9
+        )
+
+        loader = self.load_train_data(batch_size=8)
+
+        for _ in range(5):  # TTFT epochs
+            for x, y in loader:
+                x, y = x.to(self.device), y.to(self.device)
+                loss = self.loss(self.model(x), y)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()

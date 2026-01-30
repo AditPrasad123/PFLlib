@@ -59,18 +59,25 @@ class FedBABU(Server):
 
         for client in self.clients:
             client.fine_tune()
-        print("\n-------------Evaluate fine-tuned personalized models-------------")
-        self.evaluate()
+        print("\n--- Test-time fine-tuning ---")
+        for client in self.clients:
+            client.test_time_finetune()
 
+        #print("\n-------------Evaluate fine-tuned personalized models-------------")
+        print("\n-------------Evaluate personalized + TTFT models-------------")
+
+        self.evaluate()
         self.save_results()
         self.save_global_model()
 
-        if self.num_new_clients > 0:
-            self.eval_new_clients = True
-            self.set_new_clients(clientBABU)
-            print(f"\n-------------Fine tuning round-------------")
-            print("\nEvaluate new clients")
-            self.evaluate()
+        # if self.num_new_clients > 0:
+        #     self.eval_new_clients = True
+        #     self.set_new_clients(clientBABU)
+        #     print(f"\n-------------Fine tuning round-------------")
+        #     print("\nEvaluate new clients")
+        #     self.evaluate()
+            
+    
 
     def receive_models(self):
         assert (len(self.selected_clients) > 0)

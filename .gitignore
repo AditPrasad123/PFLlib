@@ -2,3 +2,5 @@
 /system/models
 *__pycache__*
 /dataset/ISIC2019
+/system/centralized_train.py
+/system/notes.md

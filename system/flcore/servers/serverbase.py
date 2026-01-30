@@ -359,11 +359,27 @@ class Server(object):
         num_samples = []
         tot_correct = []
         tot_auc = []
+        accs = []
+        f1s = []
+        aucs = []
+        recalls = []
         for c in self.new_clients:
-            ct, ns, auc = c.test_metrics()
-            tot_correct.append(ct*1.0)
-            tot_auc.append(auc*ns)
-            num_samples.append(ns)
+            #ct, ns, auc = c.test_metrics()
+            acc, f1, auc, recall = c.test_metrics()
+            accs.append(acc)
+            f1s.append(f1)
+            aucs.append(auc)
+            recalls.append(recall)
+            # tot_correct.append(ct*1.0)
+            # tot_auc.append(auc)
+            # num_samples.append(ns)
+            print(f"Mean Accuracy: {np.mean(accs):.4f}")
+            print(f"Mean Macro-F1: {np.mean(f1s):.4f}")
+            print(f"Mean AUC: {np.mean(aucs):.4f}")
+
+            mean_recall = np.mean(np.stack(recalls), axis=0)
+            print("Per-class Recall:", mean_recall)
+
 
         ids = [c.id for c in self.new_clients]
 
