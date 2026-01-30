@@ -71,6 +71,10 @@ def run(args):
             else:
                 args.model = DNN(60, 20, num_classes=args.num_classes).to(args.device)
         
+        elif model_str == "QuanvMobileNet":
+            from models.ISIC2019.quanv_mobilenet import QuanvMobileNet
+            args.model = QuanvMobileNet(num_classes=args.num_classes).to(args.device)
+
         elif model_str == "Hybrid":
             args.model = HybridModel(num_classes=8).to(args.device)
         elif model_str == "ResNet18":
