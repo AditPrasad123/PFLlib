@@ -57,7 +57,8 @@ from flcore.trainmodel.resnet import *
 from flcore.trainmodel.alexnet import *
 from flcore.trainmodel.mobilenet_v2 import *
 from flcore.trainmodel.transformer import *
-
+from hybrid_backbone import HybridModel
+from vqc_feature_processor import VQCHybridModel
 from utils.result_utils import average_data
 from utils.mem_utils import MemReporter
 
@@ -114,7 +115,10 @@ def run(args):
             args.model = QuanvMobileNet(num_classes=args.num_classes).to(args.device)
 
         elif model_str == "Hybrid":
-            args.model = HybridModel(num_classes=8).to(args.device)
+            args.model = HybridModel(num_classes=args.num_classes).to(args.device)
+        
+        elif model_str == "VQCHybrid":
+            args.model = VQCHybridModel(num_classes=args.num_classes, n_qubits=8, n_vqc_layers=3).to(args.device)
         
         elif model_str == "ResNet18":
             args.model = torchvision.models.resnet18(pretrained=True).to(args.device)
@@ -333,9 +337,15 @@ def run(args):
             server = MOON(args, i)
 
         elif args.algorithm == "FedBABU":
-            args.head = copy.deepcopy(args.model.fc)
-            args.model.fc = nn.Identity()
-            args.model = BaseHeadSplit(args.model, args.head)
+            # Skip BaseHeadSplit wrapping for models that already have internal base/head split
+            if model_str not in ["VQCHybrid", "Hybrid"]:
+                args.head = copy.deepcopy(args.model.fc)
+                args.model.fc = nn.Identity()
+                args.model = BaseHeadSplit(args.model, args.head)
+            else:
+                # VQCHybrid and Hybrid models already have built-in base/head split
+                # Store head for reference but don't wrap the model
+                args.head = args.model.head
             server = FedBABU(args, i)
 
         elif args.algorithm == "APPLE":

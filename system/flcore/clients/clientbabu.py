@@ -39,19 +39,27 @@ class clientBABU(Client):
         and sent to the server for global aggregation. This ensures shared feature learning.
         """
         # ============ Part 1: Backbone Parameter Configuration ============
-        # Freeze early CNN layers (first 4 blocks) to preserve learned low-level features
-        # These early features (edges, textures) generalize well across clients
-        for p in self.model.base.cnn[:4].parameters():
-            p.requires_grad = False
+        # Check if this is the hybrid model with specific architecture
+        if hasattr(self.model.base, 'cnn') and hasattr(self.model.base, 'transformer'):
+            # Hybrid model: Freeze early CNN layers (first 4 blocks) to preserve learned low-level features
+            # These early features (edges, textures) generalize well across clients
+            for p in self.model.base.cnn[:4].parameters():
+                p.requires_grad = False
 
-        # Enable training on later CNN blocks + transformer + head
-        # These layers capture high-level features specific to this client's local data
-        for p in self.model.base.cnn[4:].parameters():
-            p.requires_grad = True
-        for p in self.model.base.transformer.parameters():
-            p.requires_grad = True
-        for p in self.model.head.parameters():
-            p.requires_grad = True
+            # Enable training on later CNN blocks + transformer + head
+            # These layers capture high-level features specific to this client's local data
+            for p in self.model.base.cnn[4:].parameters():
+                p.requires_grad = True
+            for p in self.model.base.transformer.parameters():
+                p.requires_grad = True
+            for p in self.model.head.parameters():
+                p.requires_grad = True
+        else:
+            # Standard models (TinyViT, ResNet, etc.): Train all base parameters + head
+            for p in self.model.base.parameters():
+                p.requires_grad = True
+            for p in self.model.head.parameters():
+                p.requires_grad = True
         
         # Create optimizer over all trainable parameters (body parts + head)
         # This ensures the BODY receives gradient updates that will be aggregated globally
