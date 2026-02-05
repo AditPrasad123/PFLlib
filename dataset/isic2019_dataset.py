@@ -47,19 +47,16 @@ class ISIC2019Dataset(Dataset):
         self.std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
         
         # Define augmentations - images are 224px height with varying width
+        # Moderate augmentations for original unbalanced dataset
         sz = 224
         if train:
             self.transforms = albumentations.Compose([
-                albumentations.RandomScale(0.07),
-                albumentations.Rotate(50),
-                albumentations.RandomBrightnessContrast(0.15, 0.1),
                 albumentations.HorizontalFlip(p=0.5),
-                albumentations.Affine(shear=0.1),
+                albumentations.VerticalFlip(p=0.3),
+                albumentations.RandomBrightnessContrast(brightness_limit=0.1, contrast_limit=0.05, p=0.3),
+                albumentations.Rotate(limit=45, p=0.3),
                 albumentations.PadIfNeeded(min_height=sz, min_width=sz, border_mode=0),
                 albumentations.RandomCrop(sz, sz),
-                albumentations.CoarseDropout(num_holes_range=(1, 8),
-                                           hole_height_range=(16, 16),
-                                           hole_width_range=(16, 16)),
             ])
         else:
             # Test: apply center crop to get consistent 224x224 output
