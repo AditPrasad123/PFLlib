@@ -4,23 +4,21 @@ import cv2
 from tqdm import tqdm
 import pennylane as qml
 
-
-
-
 # PREPROCESSING SCRIPT FOR QUANVOLUTIONAL CNN
 
 # ----------------------------
 # CONFIG
 # ----------------------------
-# INPUT_DIR = "D:/Capstone/CodeBase/PFLlib/dataset/ISIC2019/train"
-# OUTPUT_DIR = "D:/Capstone/CodeBase/PFLlib/dataset/ISIC2019/train_quanv"
+INPUT_DIR = "D:/Capstone/CodeBase/PFLlib/dataset/ISIC2019/train"
+OUTPUT_DIR = "D:/Capstone/CodeBase/PFLlib/dataset/ISIC2019/train_quanv_updated"
 
-INPUT_DIR = "D:/Capstone/CodeBase/PFLlib/dataset/ISIC2019/test"
-OUTPUT_DIR = "D:/Capstone/CodeBase/PFLlib/dataset/ISIC2019/test_quanv"
+#INPUT_DIR = "D:/Capstone/CodeBase/PFLlib/dataset/ISIC2019/test"
+#OUTPUT_DIR = "D:/Capstone/CodeBase/PFLlib/dataset/ISIC2019/test_quanv_updated"
 
 
 IMAGE_SIZE = 48
 PATCH_SIZE = 2
+STRIDE = 2          # FIX 1: less aggressive stride
 N_QUBITS = 4
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -28,7 +26,10 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # ----------------------------
 # Quantum device
 # ----------------------------
-dev = qml.device("default.qubit", wires=N_QUBITS)
+try:
+    dev = qml.device("lightning.qubit", wires=N_QUBITS)
+except:
+    dev = qml.device("default.qubit", wires=N_QUBITS)
 
 @qml.qnode(dev)
 def quanv_circuit(inputs):
@@ -39,7 +40,8 @@ def quanv_circuit(inputs):
     qml.CNOT(wires=[1, 2])
     qml.CNOT(wires=[2, 3])
 
-    return qml.expval(qml.PauliZ(0))
+    # FIX 2: measure ALL qubits
+    return [qml.expval(qml.PauliZ(i)) for i in range(N_QUBITS)]
 
 
 # ----------------------------
@@ -52,7 +54,8 @@ def quanvolution(image_gray):
     out_h = (h - PATCH_SIZE) // STRIDE + 1
     out_w = (w - PATCH_SIZE) // STRIDE + 1
 
-    out = np.zeros((out_h, out_w), dtype=np.float32)
+    # FIX 2: multiple feature maps
+    out = np.zeros((out_h, out_w, N_QUBITS), dtype=np.float32)
 
     oi = 0
     for i in range(0, h - PATCH_SIZE + 1, STRIDE):
@@ -62,7 +65,7 @@ def quanvolution(image_gray):
             patch = patch.flatten()
             patch = patch / 255.0 * np.pi
 
-            out[oi, oj] = quanv_circuit(patch)
+            out[oi, oj, :] = quanv_circuit(patch)
             oj += 1
         oi += 1
 
@@ -99,7 +102,6 @@ for idx, fname in enumerate(client_files, 1):
         img_gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
 
         q_img = quanvolution(img_gray)
-        q_img = q_img[..., np.newaxis]
 
         quanv_images.append(q_img)
 
