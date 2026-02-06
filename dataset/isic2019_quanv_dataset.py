@@ -9,15 +9,16 @@ class ISIC2019QuanvDataset(Dataset):
     num_classes = 8
 
     def __init__(self, client_id: int, train: bool = True, data_path: str = None):
+        # data_path should be /PFLlib/dataset/ (passed from training) or None (from test)
         if data_path is None:
-            data_path = os.path.join(os.path.dirname(__file__), '..', '..', 'dataset')
-
+            data_path = os.path.dirname(__file__)  # /PFLlib/dataset/
+        
         self.train = train
         self.client_id = client_id
 
         split = 'train' if train else 'test'
-        npz_path = os.path.join(data_path, 'ISIC2019', split, f'{client_id}.npz')
-
+        npz_path = os.path.join(data_path, 'ISIC2019_quanv', split, f'{client_id}.npz')
+        
         data = np.load(npz_path, allow_pickle=True)
         client_data = data['data'].item()
 
@@ -48,7 +49,7 @@ class ISIC2019QuanvDataset(Dataset):
             x = x.squeeze(0)
         else:
             raise ValueError(f"Unexpected tensor shape: {x.shape}")
-
+        
         assert x.shape[0] == 4, f"Expected 4 channels, got {x.shape}"
 
         return x, torch.tensor(y, dtype=torch.long)

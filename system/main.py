@@ -334,12 +334,12 @@ def run(args):
 
         elif args.algorithm == "FedBABU":
             # Skip BaseHeadSplit wrapping for models that already have internal base/head split
-            if model_str not in ["VQCHybrid", "Hybrid"]:
+            if model_str not in ["QuanvTinyViT", "QuanvEfficientNetB0"]:
                 args.head = copy.deepcopy(args.model.fc)
                 args.model.fc = nn.Identity()
                 args.model = BaseHeadSplit(args.model, args.head)
             else:
-                # VQCHybrid and Hybrid models already have built-in base/head split
+                # Models with built-in base/head split (VQCHybrid, Hybrid, QuanvTinyViT, QuanvEfficientNetB0, InceptionV3)
                 # Store head for reference but don't wrap the model
                 args.head = args.model.head
             server = FedBABU(args, i)

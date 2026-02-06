@@ -2,8 +2,7 @@ import numpy as np
 import os
 import torch
 from collections import defaultdict
-from dataset.isic2019_dataset import ISIC2019Dataset
-from dataset.isic2019_quanv_dataset import ISIC2019QuanvDataset
+import importlib.util
 
 def read_data(dataset, idx, is_train=True):
     if is_train:
@@ -19,10 +18,27 @@ def read_data(dataset, idx, is_train=True):
 
 def read_client_data(dataset, idx, is_train=True, few_shot=0):
     dataset_path = os.path.join(os.path.dirname(__file__), '..', '..', 'dataset')
+    
     if dataset == 'ISIC2019':
-        return ISIC2019Dataset(client_id=idx, train=is_train, data_path=dataset_path)
+        # Load ISIC2019Dataset dynamically
+        module_path = os.path.join(dataset_path, 'isic2019_dataset.py')
+        spec = importlib.util.spec_from_file_location("isic2019_dataset", module_path)
+        isic_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(isic_module)
+        DatasetClass = isic_module.ISIC2019Dataset
+        return DatasetClass(client_id=idx, train=is_train, data_path=dataset_path)
+    
+    elif dataset == 'ISIC2019_quanv':
+        # Load ISIC2019QuanvDataset dynamically
+        module_path = os.path.join(dataset_path, 'isic2019_quanv_dataset.py')
+        spec = importlib.util.spec_from_file_location("isic2019_quanv_dataset", module_path)
+        quanv_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(quanv_module)
+        DatasetClass = quanv_module.ISIC2019QuanvDataset
+        return DatasetClass(client_id=idx, train=is_train, data_path=dataset_path)
+    
     else:
-        return ISIC2019QuanvDataset(client_id=idx, train=is_train, data_path=dataset_path, few_shot=few_shot)
+        raise ValueError(f"Unknown dataset: {dataset}")
 
 def process_image(data, dataset=None):
     X = torch.Tensor(data['x']).type(torch.float32)
