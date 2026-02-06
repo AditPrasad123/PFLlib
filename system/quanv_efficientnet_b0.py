@@ -2,9 +2,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.models import efficientnet_b0
+from vqc_head import VQCHead
 
 class QuanvEfficientNetB0(nn.Module):
-    def __init__(self, num_classes=9, pretrained=True):
+    def __init__(self, num_classes=8, pretrained=True, vqc_layers=2):
         super().__init__()
 
         # Adapter: 4 → 3
@@ -20,9 +21,15 @@ class QuanvEfficientNetB0(nn.Module):
             nn.Flatten()
         )
 
-        # 🔑 FedBABU: define HEAD (personalized)
+        # 🔑 FedBABU: define HEAD (personalized, VQC)
         in_features = backbone.classifier[1].in_features
-        self.head = nn.Linear(in_features, num_classes)
+        self.head = VQCHead(
+            in_features=in_features,
+            num_classes=num_classes,
+            n_qubits=4,
+            n_layers=vqc_layers
+        )
+        self.fc = self.head
 
     def forward(self, x):
         # x: (B, 4, 24, 24)

@@ -2,9 +2,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from timm import create_model
+from vqc_head import VQCHead
 
 class QuanvTinyViT(nn.Module):
-    def __init__(self, num_classes=8, pretrained=True):
+    def __init__(self, num_classes=8, pretrained=True, vqc_layers=2):
         super().__init__()
 
         # Adapter: 4 → 3
@@ -23,9 +24,14 @@ class QuanvTinyViT(nn.Module):
             nn.Identity()   # keeps interface simple
         )
 
-        # 🔑 FedBABU: personalized HEAD
-        # TinyViT feature dim = backbone.num_features
-        self.head = nn.Linear(backbone.num_features, num_classes)
+        # 🔑 FedBABU: personalized HEAD (VQC)
+        self.head = VQCHead(
+            in_features=backbone.num_features,
+            num_classes=num_classes,
+            n_qubits=4,
+            n_layers=vqc_layers
+        )
+        self.fc = self.head
 
     def forward(self, x):
         # x: (B, 4, H, W)
