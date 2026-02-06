@@ -57,8 +57,8 @@ from flcore.trainmodel.resnet import *
 from flcore.trainmodel.alexnet import *
 from flcore.trainmodel.mobilenet_v2 import *
 from flcore.trainmodel.transformer import *
-from hybrid_backbone import HybridModel
-from vqc_feature_processor import VQCHybridModel
+from quanv_efficientnet_b0 import QuanvEfficientNetB0
+from quanv_tinyvit import QuanvTinyViT
 from utils.result_utils import average_data
 from utils.mem_utils import MemReporter
 
@@ -110,15 +110,11 @@ def run(args):
             else:
                 args.model = DNN(60, 20, num_classes=args.num_classes).to(args.device)
         
-        elif model_str == "QuanvMobileNet":
-            from models.ISIC2019.quanv_mobilenet import QuanvMobileNet
-            args.model = QuanvMobileNet(num_classes=args.num_classes).to(args.device)
+        elif model_str == "QuanvEfficientNetB0":
+            args.model = QuanvEfficientNetB0(num_classes=args.num_classes, pretrained=True).to(args.device)
 
-        elif model_str == "Hybrid":
-            args.model = HybridModel(num_classes=args.num_classes).to(args.device)
-        
-        elif model_str == "VQCHybrid":
-            args.model = VQCHybridModel(num_classes=args.num_classes, n_qubits=8, n_vqc_layers=3).to(args.device)
+        elif model_str == "QuanvTinyViT":
+            args.model = QuanvTinyViT(num_classes=args.num_classes, pretrained=True).to(args.device)
         
         elif model_str == "ResNet18":
             args.model = torchvision.models.resnet18(pretrained=True).to(args.device)
