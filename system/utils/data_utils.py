@@ -18,7 +18,6 @@ def read_data(dataset, idx, is_train=True):
 
 def read_client_data(dataset, idx, is_train=True, few_shot=0):
     dataset_path = os.path.join(os.path.dirname(__file__), '..', '..', 'dataset')
-    
     if dataset == 'ISIC2019':
         # Load ISIC2019Dataset dynamically
         module_path = os.path.join(dataset_path, 'isic2019_dataset.py')

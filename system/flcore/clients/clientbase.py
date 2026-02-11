@@ -6,7 +6,9 @@ import os
 from torch.utils.data import DataLoader, WeightedRandomSampler, Subset
 from sklearn.preprocessing import label_binarize
 from sklearn import metrics
+from sklearn.metrics import roc_auc_score
 from utils.data_utils import read_client_data
+from flcore.utils.metrics import MetricsCalculator
 
 
 class Client(object):
@@ -134,6 +136,12 @@ class Client(object):
             param.data = new_param.data.clone()
 
     def test_metrics(self):
+        """
+        Compute basic test metrics: accuracy and AUC-ROC.
+        
+        Returns:
+            tuple: (test_acc, test_num, auc)
+        """
         testloaderfull = self.load_test_data()
         self.model.eval()
 
@@ -149,26 +157,168 @@ class Client(object):
                 else:
                     x = x.to(self.device)
                 y = y.to(self.device)
-                output = self.model(x)
+                
+                # Get logits from model
+                logits = self.model(x)
 
-                test_acc += (torch.sum(torch.argmax(output, dim=1) == y)).item()
+                # Compute predictions
+                test_acc += (torch.sum(torch.argmax(logits, dim=1) == y)).item()
                 test_num += y.shape[0]
 
-                y_prob.append(output.detach().cpu().numpy())
-                nc = self.num_classes
-                if self.num_classes == 2:
-                    nc += 1
-                lb = label_binarize(y.detach().cpu().numpy(), classes=np.arange(nc))
-                if self.num_classes == 2:
-                    lb = lb[:, :2]
-                y_true.append(lb)
+                # Convert logits to softmax probabilities (IMPORTANT!)
+                probs = torch.softmax(logits, dim=1)
+                y_prob.append(probs.detach().cpu().numpy())
+                
+                # Store true labels
+                y_true.append(y.detach().cpu().numpy())
 
-        y_prob = np.concatenate(y_prob, axis=0)
-        y_true = np.concatenate(y_true, axis=0)
+        # Concatenate arrays
+        y_prob = np.concatenate(y_prob, axis=0)  # Shape: (N, C) softmax probs
+        y_true = np.concatenate(y_true, axis=0)  # Shape: (N,) class indices
 
-        auc = metrics.roc_auc_score(y_true, y_prob, average='micro')
+        # Compute AUC-ROC
+        auc = self._compute_auc_roc(y_true, y_prob)
         
         return test_acc, test_num, auc
+    
+    def _compute_auc_roc(self, y_true, y_prob):
+        """
+        Compute multiclass AUC-ROC.
+        
+        Args:
+            y_true: True labels (0 to C-1)
+            y_prob: Softmax probabilities (N, C)
+            
+        Returns:
+            float: AUC-ROC score (macro average)
+        """
+        try:
+            # Ensure inputs are valid
+            assert y_prob.shape[0] == len(y_true), "Shape mismatch"
+            assert y_prob.shape[1] == self.num_classes, "Class mismatch"
+            
+            unique_classes_true = np.unique(y_true)
+            unique_classes_pred = np.unique(np.argmax(y_prob, axis=1))
+            
+            # Need at least 2 classes for AUC
+            if len(unique_classes_true) < 2:
+                #print("[DEBUG] Warning: Only one class in ground truth, cannot compute AUC")
+                return 0.0
+            
+            # For binary classification
+            if self.num_classes == 2:
+                # Use the probability of class 1
+                y_prob_pos = y_prob[:, 1]
+                auc = roc_auc_score(y_true, y_prob_pos)
+                return float(auc) if not (np.isnan(auc) or np.isinf(auc)) else 0.0
+            
+            # For multiclass: one-vs-rest, but only for classes present in ground truth
+            # This avoids NaN when some classes are missing
+            try:
+                # Use weighted macro (handles imbalanced classes)
+                y_true_bin = label_binarize(y_true, classes=np.arange(self.num_classes))
+                auc = roc_auc_score(y_true_bin, y_prob, average='weighted', multi_class='ovr')
+                
+                if np.isnan(auc) or np.isinf(auc):
+                    #print(f"[DEBUG] Warning: AUC returned NaN, trying fallback...")
+                    # Fallback: compute only for classes present in y_true
+                    valid_classes = unique_classes_true
+                    if len(valid_classes) >= 2:
+                        auc_scores = []
+                        for class_idx in valid_classes:
+                            try:
+                                y_binary = (y_true == class_idx).astype(int)
+                                if np.sum(y_binary) > 0 and np.sum(1 - y_binary) > 0:
+                                    auc_class = roc_auc_score(y_binary, y_prob[:, class_idx])
+                                    if not (np.isnan(auc_class) or np.isinf(auc_class)):
+                                        auc_scores.append(auc_class)
+                            except Exception:
+                                continue
+                        
+                        if auc_scores:
+                            auc = np.mean(auc_scores)
+                        else:
+                            auc = 0.0
+                    else:
+                        auc = 0.0
+                
+                return float(auc) if not (np.isnan(auc) or np.isinf(auc)) else 0.0
+                
+            except Exception as e:
+                #print(f"[DEBUG] Error in AUC computation: {e}")
+                return 0.0
+            
+        except Exception as e:
+            #print(f"[DEBUG] Error computing AUC: {e}")
+            return 0.0
+
+    def test_metrics_detailed(self):
+        """
+        Calculate detailed test metrics including F1, Precision, Recall, KappaScore, etc.
+        
+        Returns:
+            dict: Dictionary containing all classification metrics
+        """
+        testloaderfull = self.load_test_data()
+        self.model.eval()
+
+        test_acc = 0
+        test_num = 0
+        y_prob = []
+        y_true = []
+        y_pred = []
+        
+        with torch.no_grad():
+            for x, y in testloaderfull:
+                if type(x) == type([]):
+                    x[0] = x[0].to(self.device)
+                else:
+                    x = x.to(self.device)
+                y = y.to(self.device)
+                
+                # Get model output (logits)
+                logits = self.model(x)
+
+                # Compute predictions from logits
+                pred = torch.argmax(logits, dim=1)
+                test_acc += (torch.sum(pred == y)).item()
+                test_num += y.shape[0]
+                
+                # Store predicted labels
+                y_pred.append(pred.detach().cpu().numpy())
+
+                # Convert logits to softmax probabilities (IMPORTANT!)
+                probs = torch.softmax(logits, dim=1)
+                y_prob.append(probs.detach().cpu().numpy())
+                
+                # Store true labels
+                y_true.append(y.detach().cpu().numpy())
+
+        # Concatenate all batches
+        y_prob = np.concatenate(y_prob, axis=0)  # Shape: (N, C) with softmax probs
+        y_true = np.concatenate(y_true, axis=0)  # Shape: (N,) with class indices
+        y_pred = np.concatenate(y_pred, axis=0)  # Shape: (N,) with predicted class indices
+
+        # Validate before passing to metrics calculator
+        assert y_true.shape[0] == y_pred.shape[0] == y_prob.shape[0], \
+            f"Shape mismatch: {y_true.shape[0]} vs {y_pred.shape[0]} vs {y_prob.shape[0]}"
+        assert y_prob.shape[1] == self.num_classes, \
+            f"Probability shape mismatch: {y_prob.shape[1]} classes vs {self.num_classes} expected"
+        
+        # Verify softmax properties
+        prob_sums = np.sum(y_prob, axis=1)
+        assert np.allclose(prob_sums, 1.0, atol=1e-5), \
+            f"Probabilities don't sum to 1: min={np.min(prob_sums):.6f}, max={np.max(prob_sums):.6f}"
+
+        # Calculate all metrics using MetricsCalculator
+        calc = MetricsCalculator(num_classes=self.num_classes)
+        detailed_metrics = calc.calculate_classification_metrics(y_true, y_pred, y_prob)
+        
+        # Add basic counts
+        detailed_metrics['test_samples'] = test_num
+        detailed_metrics['test_correct'] = test_acc
+        
+        return detailed_metrics
 
     def train_metrics(self):
         trainloader = self.load_train_data()

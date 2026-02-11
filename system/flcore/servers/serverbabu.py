@@ -30,6 +30,9 @@ class FedBABU(Server):
                 print(f"\n-------------Round number: {i}-------------")
                 print("\nEvaluate global model")
                 self.evaluate()
+                # Track accuracy for convergence analysis
+                if len(self.rs_test_acc) > 0:
+                    self.fl_metrics_tracker.add_test_accuracy(self.rs_test_acc[-1])
 
             for client in self.selected_clients:
                 client.train()
@@ -44,8 +47,18 @@ class FedBABU(Server):
                 self.call_dlg(i)
             self.aggregate_parameters()
 
-            self.Budget.append(time.time() - s_t)
-            print('-'*25, 'time cost', '-'*25, self.Budget[-1])
+            round_time = time.time() - s_t
+            self.Budget.append(round_time)
+            # Track time metrics
+            self.fl_metrics_tracker.add_round_time(round_time)
+            self.fl_metrics_tracker.add_local_computation_time(round_time)
+            
+            # Calculate and track communication cost
+            communication_cost = self.calculate_communication_cost()
+            self.fl_metrics_tracker.add_communication_cost(communication_cost)
+            
+            print('-'*25, 'time cost', '-'*25, round_time)
+            print('-'*25, f'communication cost: {communication_cost / (1024*1024):.2f} MB', '-'*25)
 
             if self.auto_break and self.check_done(acc_lss=[self.rs_test_acc], top_cnt=self.top_cnt):
                 break
@@ -57,6 +70,8 @@ class FedBABU(Server):
         print("\nAverage time cost per round.")
         print(sum(self.Budget[1:])/len(self.Budget[1:]))
 
+        baseline_acc = self.rs_test_acc[-1] if len(self.rs_test_acc) > 0 else None
+
         for client in self.clients:
             client.fine_tune()
         print("\n--- Test-time fine-tuning ---")
@@ -67,6 +82,53 @@ class FedBABU(Server):
         print("\n-------------Evaluate personalized + TTFT models-------------")
 
         self.evaluate()
+
+        if baseline_acc is not None and len(self.rs_test_acc) > 0:
+            personalized_acc = self.rs_test_acc[-1]
+            self.fl_metrics_tracker.set_personalization_metrics(
+                baseline_acc, personalized_acc
+            )
+        
+        # Print FL metrics summary
+        print("\n" + "="*50)
+        print("FEDERATED LEARNING METRICS SUMMARY")
+        print("="*50)
+        fl_metrics = self.fl_metrics_tracker.get_all_fl_metrics()
+        
+        if fl_metrics['convergence']:
+            print("\nConvergence Metrics:")
+            print(f"  Final Accuracy: {fl_metrics['convergence']['final_accuracy']:.4f}")
+            print(f"  Initial Accuracy: {fl_metrics['convergence']['initial_accuracy']:.4f}")
+            print(f"  Improvement: {fl_metrics['convergence']['improvement']:.4f}")
+            print(f"  Rounds to 95% Convergence: {fl_metrics['convergence']['rounds_to_convergence']}")
+        
+        if fl_metrics['computation']:
+            print("\nComputation Time (per Round):")
+            print(f"  Average: {fl_metrics['computation']['avg_time_per_round']:.4f}s")
+            print(f"  Min: {fl_metrics['computation']['min_time_per_round']:.4f}s")
+            print(f"  Max: {fl_metrics['computation']['max_time_per_round']:.4f}s")
+            print(f"  Total: {fl_metrics['computation']['total_time_minutes']:.2f} minutes")
+        
+        if fl_metrics['communication']:
+            print("\nCommunication Overhead (per Round):")
+            print(f"  Average: {fl_metrics['communication']['avg_communication_per_round_mb']:.2f} MB")
+            print(f"  Total: {fl_metrics['communication']['total_communication_mb']:.2f} MB")
+
+        if 'personalization' in fl_metrics:
+            print("\nPersonalization Gain:")
+            print(f"  Baseline Accuracy: {fl_metrics['personalization']['baseline_accuracy']:.4f}")
+            print(f"  Personalized Accuracy: {fl_metrics['personalization']['personalized_accuracy']:.4f}")
+            print(f"  Gain: {fl_metrics['personalization']['personalization_gain']:.4f}")
+
+        if 'model' in fl_metrics:
+            print("\nQuantum Model Info:")
+            if 'n_qubits' in fl_metrics['model']:
+                print(f"  Qubits: {fl_metrics['model']['n_qubits']}")
+            if 'circuit_depth' in fl_metrics['model']:
+                print(f"  Circuit Depth: {fl_metrics['model']['circuit_depth']}")
+        
+        print("="*50 + "\n")
+        
         self.save_results()
         self.save_global_model()
 

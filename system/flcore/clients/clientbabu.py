@@ -86,7 +86,7 @@ class clientBABU(Client):
     def train_metrics(self):
         return super().train_metrics()
 
-    def set_parameters(self, base):
+    def set_parameters(self, model):
         """
         Receive global BODY updates from server.
         
@@ -94,8 +94,14 @@ class clientBABU(Client):
         from all clients. This method applies those global updates locally, preserving the
         locally-trained HEAD which is not shared in the federation.
         """
-        for new_param, old_param in zip(base.parameters(), self.model.base.parameters()):
+        # model may already be the backbone (FedBABU behavior)
+        src = model.base if hasattr(model, "base") else model
+        tgt = self.model.base
+
+        for new_param, old_param in zip(src.parameters(), tgt.parameters()):
             old_param.data = new_param.data.clone()
+
+
 
     def fine_tune(self):
         """

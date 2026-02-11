@@ -18,7 +18,6 @@ class ISIC2019QuanvDataset(Dataset):
 
         split = 'train' if train else 'test'
         npz_path = os.path.join(data_path, 'ISIC2019_quanv', split, f'{client_id}.npz')
-        
         data = np.load(npz_path, allow_pickle=True)
         client_data = data['data'].item()
 
@@ -39,16 +38,26 @@ class ISIC2019QuanvDataset(Dataset):
         if isinstance(x, np.ndarray) and x.ndim == 4 and x.shape[-1] == 1:
             x = x.squeeze(-1)
 
-        x = torch.tensor(x, dtype=torch.float32)
-
-        if x.ndim == 3:
-            # (H, W, C) → (C, H, W)
-            x = x.permute(2, 0, 1)
-        elif x.ndim == 4:
-            # (1, C, H, W)
-            x = x.squeeze(0)
+        if isinstance(x, np.ndarray) and x.ndim == 3:
+            # Support both HWC and CHW layouts
+            if x.shape[0] == 4:
+                x = x
+            elif x.shape[-1] == 4:
+                x = np.transpose(x, (2, 0, 1))
+            else:
+                raise ValueError(f"Unexpected numpy shape: {x.shape}")
+        elif isinstance(x, np.ndarray) and x.ndim == 4:
+            # (1, C, H, W) or (1, H, W, C)
+            if x.shape[1] == 4:
+                x = x[0]
+            elif x.shape[-1] == 4:
+                x = np.transpose(x[0], (2, 0, 1))
+            else:
+                raise ValueError(f"Unexpected numpy shape: {x.shape}")
         else:
             raise ValueError(f"Unexpected tensor shape: {x.shape}")
+
+        x = torch.tensor(x, dtype=torch.float32)
         
         assert x.shape[0] == 4, f"Expected 4 channels, got {x.shape}"
 
