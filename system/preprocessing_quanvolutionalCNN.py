@@ -9,11 +9,11 @@ import pennylane as qml
 # ----------------------------
 # CONFIG
 # ----------------------------
-INPUT_DIR = "D:/Capstone/CodeBase/PFLlib/dataset/ISIC2019/train"
-OUTPUT_DIR = "D:/Capstone/CodeBase/PFLlib/dataset/ISIC2019/train_quanv_updated"
+#INPUT_DIR = "D:/Capstone/CodeBase/PFLlib/dataset/ISIC2019/train"
+#OUTPUT_DIR = "D:/Capstone/CodeBase/PFLlib/dataset/ISIC2019/train_quanv_current"
 
-#INPUT_DIR = "D:/Capstone/CodeBase/PFLlib/dataset/ISIC2019/test"
-#OUTPUT_DIR = "D:/Capstone/CodeBase/PFLlib/dataset/ISIC2019/test_quanv_updated"
+INPUT_DIR = "D:/Capstone/CodeBase/PFLlib/dataset/ISIC2019/test"
+OUTPUT_DIR = "D:/Capstone/CodeBase/PFLlib/dataset/ISIC2019/test_quanv_current"
 
 
 IMAGE_SIZE = 48
@@ -47,15 +47,13 @@ def quanv_circuit(inputs):
 # ----------------------------
 # Quanvolution on ONE image
 # ----------------------------
-STRIDE = 4
-
 def quanvolution(image_gray):
     h, w = image_gray.shape
     out_h = (h - PATCH_SIZE) // STRIDE + 1
     out_w = (w - PATCH_SIZE) // STRIDE + 1
 
-    # FIX 2: multiple feature maps
-    out = np.zeros((out_h, out_w, N_QUBITS), dtype=np.float32)
+    # FIX 2: multiple feature maps - CHW format for PyTorch
+    out = np.zeros((N_QUBITS, out_h, out_w), dtype=np.float32)
 
     oi = 0
     for i in range(0, h - PATCH_SIZE + 1, STRIDE):
@@ -65,7 +63,7 @@ def quanvolution(image_gray):
             patch = patch.flatten()
             patch = patch / 255.0 * np.pi
 
-            out[oi, oj, :] = quanv_circuit(patch)
+            out[:, oi, oj] = quanv_circuit(patch)
             oj += 1
         oi += 1
 

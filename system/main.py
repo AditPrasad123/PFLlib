@@ -57,8 +57,8 @@ from flcore.trainmodel.resnet import *
 from flcore.trainmodel.alexnet import *
 from flcore.trainmodel.mobilenet_v2 import *
 from flcore.trainmodel.transformer import *
-from quanv_efficientnet_b0 import QuanvEfficientNetB0
-from quanv_tinyvit import QuanvTinyViT
+from quanv_efficientnet_b0 import QuanvEfficientNetB0, QuanvEfficientNetB0Improved, QuanvEfficientNetB0Advanced
+from quanv_tinyvit import QuanvTinyViT, QuanvTinyViTImproved, QuanvTinyViTAdvanced
 from utils.result_utils import average_data
 from utils.mem_utils import MemReporter
 
@@ -111,11 +111,19 @@ def run(args):
                 args.model = DNN(60, 20, num_classes=args.num_classes).to(args.device)
         
         elif model_str == "QuanvEfficientNetB0":
-            args.model = QuanvEfficientNetB0(num_classes=args.num_classes, pretrained=True).to(args.device)
+            args.model = QuanvEfficientNetB0Improved(
+                num_classes=args.num_classes, 
+                pretrained=True, 
+                improvement_level='improved'  # Use the improved version with better performance
+                ).to(args.device)
 
         elif model_str == "QuanvTinyViT":
-            args.model = QuanvTinyViT(num_classes=args.num_classes, pretrained=True).to(args.device)
-        
+            args.model = QuanvTinyViTImproved(
+                num_classes=args.num_classes,
+                pretrained=True,
+                improvement_level='improved'  # Use the improved version with better performance
+            ).to(args.device)
+            
         elif model_str == "ResNet18":
             args.model = torchvision.models.resnet18(pretrained=True).to(args.device)
             feature_dim = list(args.model.fc.parameters())[0].shape[1]
@@ -152,6 +160,19 @@ def run(args):
             # feature_dim = list(args.model.fc.parameters())[0].shape[1]
             # args.model.fc = nn.Linear(feature_dim, args.num_classes).to(args.device)
         
+        elif model_str == "EfficientNetB0":
+            model = torchvision.models.efficientnet_b0(pretrained=True)
+
+            in_features = model.classifier[1].in_features
+
+            # Replace classifier with identity
+            model.classifier[1] = nn.Identity()
+
+            # Create fc manually (so framework works)
+            model.fc = nn.Linear(in_features, args.num_classes)
+
+            args.model = model.to(args.device)
+
         elif model_str == "TinyViT":
             # Load the Tiny-ViT model hosted on Hugging Face via timm
             try:
