@@ -300,13 +300,13 @@ def compare_metrics(file_names, metric_key='rs_test_acc'):
     plt.show()
 
 
-def plot_roc_curve(file_name, round_num=0, save_path=None):
+def plot_roc_curve(file_name, round_num=-1, save_path=None):
     """
     Plot ROC (Receiver Operating Characteristic) curve.
     
     Args:
         file_name (str): Result file name (without .h5)
-        round_num (int): Which round to plot (default: last round with data)
+        round_num (int): Which round to plot (default: -1 for last round)
         save_path (str): Optional path to save the plot
     """
     results = read_detailed_results(file_name)
@@ -323,16 +323,21 @@ def plot_roc_curve(file_name, round_num=0, save_path=None):
         return
     
     # Find the round to use
-    if isinstance(round_num, int):
+    available_rounds = sorted(results['detailed_metrics'].keys(), key=lambda x: int(x.split('_')[1]))
+    
+    if round_num == -1 or (isinstance(round_num, int) and round_num < 0):
+        # Use last round
+        round_key = available_rounds[-1]
+    elif isinstance(round_num, int):
         round_key = f'round_{round_num}'
     else:
         round_key = round_num
     
     # If round not found, use the last available round
     if round_key not in results['detailed_metrics']:
-        available_rounds = list(results['detailed_metrics'].keys())
         if available_rounds:
             round_key = available_rounds[-1]
+            print(f"Note: Specified round not found, using {round_key}")
         else:
             print("No rounds with ROC curve data found")
             return
@@ -388,13 +393,13 @@ def plot_roc_curve(file_name, round_num=0, save_path=None):
     plt.show()
 
 
-def plot_pr_curve(file_name, round_num=0, save_path=None):
+def plot_pr_curve(file_name, round_num=-1, save_path=None):
     """
     Plot Precision-Recall curve.
     
     Args:
         file_name (str): Result file name (without .h5)
-        round_num (int): Which round to plot (default: last round with data)
+        round_num (int): Which round to plot (default: -1 for last round)
         save_path (str): Optional path to save the plot
     """
     results = read_detailed_results(file_name)
@@ -411,16 +416,21 @@ def plot_pr_curve(file_name, round_num=0, save_path=None):
         return
     
     # Find the round to use
-    if isinstance(round_num, int):
+    available_rounds = sorted(results['detailed_metrics'].keys(), key=lambda x: int(x.split('_')[1]))
+    
+    if round_num == -1 or (isinstance(round_num, int) and round_num < 0):
+        # Use last round
+        round_key = available_rounds[-1]
+    elif isinstance(round_num, int):
         round_key = f'round_{round_num}'
     else:
         round_key = round_num
     
     # If round not found, use the last available round
     if round_key not in results['detailed_metrics']:
-        available_rounds = list(results['detailed_metrics'].keys())
         if available_rounds:
             round_key = available_rounds[-1]
+            print(f"Note: Specified round not found, using {round_key}")
         else:
             print("No rounds with PR curve data found")
             return
@@ -474,13 +484,13 @@ def plot_pr_curve(file_name, round_num=0, save_path=None):
     plt.show()
 
 
-def plot_roc_and_pr_curves(file_name, round_num=0, save_path=None):
+def plot_roc_and_pr_curves(file_name, round_num=-1, save_path=None):
     """
     Plot both ROC and PR curves side by side.
     
     Args:
         file_name (str): Result file name (without .h5)
-        round_num (int): Which round to plot (default: last round with data)
+        round_num (int): Which round to plot (default: -1 for last round)
         save_path (str): Optional path to save the plot
     """
     results = read_detailed_results(file_name)
@@ -495,18 +505,23 @@ def plot_roc_and_pr_curves(file_name, round_num=0, save_path=None):
         print("   cd system")
         print("   python main.py -data ISIC2019_quanv -m QuanvTinyViT -algo FedBABU -gr 20 -ls 2 -lbs 16 -fb True -lr 0.001 -fte 10 -dev cuda")
         return
-        return
     
     # Find the round to use
-    if isinstance(round_num, int):
+    available_rounds = sorted(results['detailed_metrics'].keys(), key=lambda x: int(x.split('_')[1]))
+    
+    if round_num == -1 or (isinstance(round_num, int) and round_num < 0):
+        # Use last round
+        round_key = available_rounds[-1]
+    elif isinstance(round_num, int):
         round_key = f'round_{round_num}'
     else:
         round_key = round_num
     
+    # If round not found, use the last available round
     if round_key not in results['detailed_metrics']:
-        available_rounds = list(results['detailed_metrics'].keys())
         if available_rounds:
             round_key = available_rounds[-1]
+            print(f"Note: Specified round not found, using {round_key}")
         else:
             print("No rounds with curve data found")
             return
