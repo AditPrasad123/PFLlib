@@ -159,20 +159,50 @@ def print_detailed_metrics_summary(file_name):
         
         if 'accuracy' in final_metrics:
             print(f"Accuracy: {final_metrics['accuracy']:.4f}")
-        if 'f1_macro' in final_metrics:
-            print(f"F1-Score (Macro): {final_metrics['f1_macro']:.4f}")
-        if 'f1_weighted' in final_metrics:
-            print(f"F1-Score (Weighted): {final_metrics['f1_weighted']:.4f}")
+        
+        print("\n--- Precision (Macro, Micro, Weighted) ---")
         if 'precision_macro' in final_metrics:
-            print(f"Precision (Macro): {final_metrics['precision_macro']:.4f}")
+            print(f"  Macro: {final_metrics['precision_macro']:.4f}")
+        if 'precision_micro' in final_metrics:
+            print(f"  Micro: {final_metrics['precision_micro']:.4f}")
+        if 'precision_weighted' in final_metrics:
+            print(f"  Weighted: {final_metrics['precision_weighted']:.4f}")
+        
+        print("\n--- Recall (Macro, Micro, Weighted) ---")
         if 'recall_macro' in final_metrics:
-            print(f"Recall (Macro): {final_metrics['recall_macro']:.4f}")
+            print(f"  Macro: {final_metrics['recall_macro']:.4f}")
+        if 'recall_micro' in final_metrics:
+            print(f"  Micro: {final_metrics['recall_micro']:.4f}")
+        if 'recall_weighted' in final_metrics:
+            print(f"  Weighted: {final_metrics['recall_weighted']:.4f}")
+        
+        print("\n--- Sensitivity (Macro, Micro, Weighted) ---")
         if 'sensitivity_macro' in final_metrics:
-            print(f"Sensitivity (Macro): {final_metrics['sensitivity_macro']:.4f}")
+            print(f"  Macro: {final_metrics['sensitivity_macro']:.4f}")
+        if 'sensitivity_micro' in final_metrics:
+            print(f"  Micro: {final_metrics['sensitivity_micro']:.4f}")
+        if 'sensitivity_weighted' in final_metrics:
+            print(f"  Weighted: {final_metrics['sensitivity_weighted']:.4f}")
+        
+        print("\n--- Specificity (Macro, Micro, Weighted) ---")
         if 'specificity_macro' in final_metrics:
-            print(f"Specificity (Macro): {final_metrics['specificity_macro']:.4f}")
+            print(f"  Macro: {final_metrics['specificity_macro']:.4f}")
+        if 'specificity_micro' in final_metrics:
+            print(f"  Micro: {final_metrics['specificity_micro']:.4f}")
+        if 'specificity_weighted' in final_metrics:
+            print(f"  Weighted: {final_metrics['specificity_weighted']:.4f}")
+        
+        print("\n--- F1-Score (Macro, Micro, Weighted) ---")
+        if 'f1_macro' in final_metrics:
+            print(f"  Macro: {final_metrics['f1_macro']:.4f}")
+        if 'f1_micro' in final_metrics:
+            print(f"  Micro: {final_metrics['f1_micro']:.4f}")
+        if 'f1_weighted' in final_metrics:
+            print(f"  Weighted: {final_metrics['f1_weighted']:.4f}")
+        
+        print("\n--- Other Metrics ---")
         if 'cohen_kappa' in final_metrics:
-            print(f"Kappa Score: {final_metrics['cohen_kappa']:.4f}")
+            print(f"Cohen's Kappa: {final_metrics['cohen_kappa']:.4f}")
         if 'matthews_cc' in final_metrics:
             print(f"Matthews Correlation Coefficient: {final_metrics['matthews_cc']:.4f}")
         if 'auc_roc' in final_metrics:
@@ -486,7 +516,7 @@ def plot_pr_curve(file_name, round_num=-1, save_path=None):
 
 def plot_roc_and_pr_curves(file_name, round_num=-1, save_path=None):
     """
-    Plot both ROC and PR curves side by side.
+    Plot ROC, PR curves, and Confusion Matrix.
     
     Args:
         file_name (str): Result file name (without .h5)
@@ -528,47 +558,142 @@ def plot_roc_and_pr_curves(file_name, round_num=-1, save_path=None):
     
     metrics_dict = results['detailed_metrics'][round_key]
     
-    fig, axes = plt.subplots(1, 2, figsize=(15, 6))
+    # Create 2x2 subplot: ROC, PR, Confusion Matrix, and metrics summary
+    fig = plt.figure(figsize=(16, 12))
+    gs = fig.add_gridspec(2, 2, hspace=0.3, wspace=0.3)
     
-    # Plot ROC curve
+    # ROC Curve (top-left)
+    ax1 = fig.add_subplot(gs[0, 0])
     if 'roc_curve' in metrics_dict and metrics_dict['roc_curve'] is not None:
         roc_curve_data = metrics_dict['roc_curve']
         if isinstance(roc_curve_data, dict) and 'fpr' in roc_curve_data and 'tpr' in roc_curve_data:
             fpr = roc_curve_data['fpr']
             tpr = roc_curve_data['tpr']
-            axes[0].plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC (AUC = {metrics_dict.get("auc_roc", 0):.4f})')
-            axes[0].plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--', label='Random')
-            axes[0].set_xlabel('False Positive Rate', fontsize=11)
-            axes[0].set_ylabel('True Positive Rate', fontsize=11)
-            axes[0].set_title('ROC Curve', fontsize=12)
-            axes[0].legend(fontsize=10)
-            axes[0].grid(True, alpha=0.3)
+            ax1.plot(fpr, tpr, color='darkorange', lw=2.5, label=f'ROC (AUC = {metrics_dict.get("auc_roc", 0):.4f})')
+            ax1.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--', label='Random Classifier')
+            ax1.set_xlabel('False Positive Rate', fontsize=11)
+            ax1.set_ylabel('True Positive Rate', fontsize=11)
+            ax1.set_title('ROC Curve', fontsize=12, fontweight='bold')
+            ax1.legend(fontsize=10, loc='lower right')
+            ax1.grid(True, alpha=0.3)
+            ax1.set_xlim([0.0, 1.0])
+            ax1.set_ylim([0.0, 1.05])
     else:
-        axes[0].text(0.5, 0.5, 'No ROC Curve Data', ha='center', va='center')
+        ax1.text(0.5, 0.5, 'No ROC Curve Data', ha='center', va='center', fontsize=12)
+        ax1.set_xlim(0, 1)
+        ax1.set_ylim(0, 1)
     
-    # Plot PR curve
+    # PR Curve (top-right)
+    ax2 = fig.add_subplot(gs[0, 1])
     if 'pr_curve' in metrics_dict and metrics_dict['pr_curve'] is not None:
         pr_curve_data = metrics_dict['pr_curve']
         if isinstance(pr_curve_data, dict) and 'precision' in pr_curve_data and 'recall' in pr_curve_data:
             precision = pr_curve_data['precision']
             recall = pr_curve_data['recall']
-            axes[1].plot(recall, precision, color='darkgreen', lw=2, label=f'PR (AUC = {metrics_dict.get("auc_pr", 0):.4f})')
-            axes[1].set_xlabel('Recall', fontsize=11)
-            axes[1].set_ylabel('Precision', fontsize=11)
-            axes[1].set_title('Precision-Recall Curve', fontsize=12)
-            axes[1].legend(fontsize=10)
-            axes[1].grid(True, alpha=0.3)
-            axes[1].set_xlim([0.0, 1.0])
-            axes[1].set_ylim([0.0, 1.05])
+            ax2.plot(recall, precision, color='darkgreen', lw=2.5, label=f'PR (AUC = {metrics_dict.get("auc_pr", 0):.4f})')
+            ax2.set_xlabel('Recall', fontsize=11)
+            ax2.set_ylabel('Precision', fontsize=11)
+            ax2.set_title('Precision-Recall Curve', fontsize=12, fontweight='bold')
+            ax2.legend(fontsize=10, loc='best')
+            ax2.grid(True, alpha=0.3)
+            ax2.set_xlim([0.0, 1.0])
+            ax2.set_ylim([0.0, 1.05])
     else:
-        axes[1].text(0.5, 0.5, 'No PR Curve Data', ha='center', va='center')
+        ax2.text(0.5, 0.5, 'No PR Curve Data', ha='center', va='center', fontsize=12)
+        ax2.set_xlim(0, 1)
+        ax2.set_ylim(0, 1)
     
-    plt.suptitle(f'Model Performance Curves - {round_key}', fontsize=14, y=1.02)
-    plt.tight_layout()
+    # Confusion Matrix (bottom-left)
+    ax3 = fig.add_subplot(gs[1, 0])
+    if 'confusion_matrix' in metrics_dict and metrics_dict['confusion_matrix'] is not None:
+        cm = np.array(metrics_dict['confusion_matrix'])
+        
+        # Create heatmap
+        im = ax3.imshow(cm, cmap='Blues', aspect='auto')
+        
+        # Function to determine if text should be white or black based on background brightness
+        def get_text_color(value, max_value):
+            # Normalize value to 0-1 range
+            normalized = value / max_value if max_value > 0 else 0
+            # If normalized value is high (dark background), use white text, else black
+            return 'white' if normalized > 0.5 else 'black'
+        
+        # Add text annotations with dynamic color
+        num_classes = cm.shape[0]
+        max_value = np.max(cm) if np.max(cm) > 0 else 1
+        for i in range(num_classes):
+            for j in range(num_classes):
+                value = cm[i, j]
+                text_color = get_text_color(value, max_value)
+                text = ax3.text(j, i, int(value),
+                              ha="center", va="center", color=text_color, fontweight='bold', fontsize=10)
+        
+        ax3.set_xlabel('Predicted Label', fontsize=11)
+        ax3.set_ylabel('True Label', fontsize=11)
+        ax3.set_title('Confusion Matrix', fontsize=12, fontweight='bold')
+        ax3.set_xticks(np.arange(num_classes))
+        ax3.set_yticks(np.arange(num_classes))
+        plt.colorbar(im, ax=ax3)
+    else:
+        ax3.text(0.5, 0.5, 'No Confusion Matrix Data', ha='center', va='center', fontsize=12)
+        ax3.set_xlim(0, 1)
+        ax3.set_ylim(0, 1)
+    
+    # Metrics Summary (bottom-right)
+    ax4 = fig.add_subplot(gs[1, 1])
+    ax4.axis('off')
+    
+    # Create summary text
+    summary_text = "=== METRICS SUMMARY ===\n\n"
+    
+    if 'accuracy' in metrics_dict:
+        summary_text += f"Accuracy: {metrics_dict['accuracy']:.4f}\n"
+    
+    summary_text += "\nPRECISION:\n"
+    if 'precision_macro' in metrics_dict:
+        summary_text += f"  Macro: {metrics_dict['precision_macro']:.4f}\n"
+    if 'precision_micro' in metrics_dict:
+        summary_text += f"  Micro: {metrics_dict['precision_micro']:.4f}\n"
+    
+    summary_text += "\nRECALL:\n"
+    if 'recall_macro' in metrics_dict:
+        summary_text += f"  Macro: {metrics_dict['recall_macro']:.4f}\n"
+    if 'recall_micro' in metrics_dict:
+        summary_text += f"  Micro: {metrics_dict['recall_micro']:.4f}\n"
+    
+    summary_text += "\nSENSITIVITY:\n"
+    if 'sensitivity_macro' in metrics_dict:
+        summary_text += f"  Macro: {metrics_dict['sensitivity_macro']:.4f}\n"
+    if 'sensitivity_micro' in metrics_dict:
+        summary_text += f"  Micro: {metrics_dict['sensitivity_micro']:.4f}\n"
+    
+    summary_text += "\nSPECIFICITY:\n"
+    if 'specificity_macro' in metrics_dict:
+        summary_text += f"  Macro: {metrics_dict['specificity_macro']:.4f}\n"
+    if 'specificity_micro' in metrics_dict:
+        summary_text += f"  Micro: {metrics_dict['specificity_micro']:.4f}\n"
+    
+    summary_text += "\nF1-SCORE:\n"
+    if 'f1_macro' in metrics_dict:
+        summary_text += f"  Macro: {metrics_dict['f1_macro']:.4f}\n"
+    if 'f1_micro' in metrics_dict:
+        summary_text += f"  Micro: {metrics_dict['f1_micro']:.4f}\n"
+    
+    summary_text += "\nOTHER:\n"
+    if 'cohen_kappa' in metrics_dict:
+        summary_text += f"  Kappa: {metrics_dict['cohen_kappa']:.4f}\n"
+    if 'matthews_cc' in metrics_dict:
+        summary_text += f"  MCC: {metrics_dict['matthews_cc']:.4f}\n"
+    
+    ax4.text(0.05, 0.95, summary_text, transform=ax4.transAxes, fontsize=10,
+            verticalalignment='top', fontfamily='monospace',
+            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
+    
+    plt.suptitle(f'Model Performance Evaluation - {round_key}', fontsize=14, fontweight='bold', y=0.995)
     
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"Curves saved to {save_path}")
+        print(f"Curves and confusion matrix saved to {save_path}")
     
     plt.show()
 

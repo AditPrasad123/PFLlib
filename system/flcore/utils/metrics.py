@@ -164,7 +164,23 @@ class MetricsCalculator:
 
         # Sensitivity is recall (alias for clarity)
         metrics_dict['sensitivity_macro'] = metrics_dict['recall_macro']
+        metrics_dict['sensitivity_micro'] = metrics_dict['recall_micro']
         metrics_dict['sensitivity_weighted'] = metrics_dict['recall_weighted']
+        
+        # 5c. Specificity - Micro average
+        # Micro specificity: Overall TN / (Overall TN + Overall FP)
+        total_tn = 0
+        total_fp = 0
+        for i in range(self.num_classes):
+            tp = cm[i, i]
+            fn = np.sum(cm[i, :]) - tp
+            fp = np.sum(cm[:, i]) - tp
+            tn = total - tp - fn - fp
+            total_tn += tn
+            total_fp += fp
+        
+        specificity_micro_denom = total_tn + total_fp
+        metrics_dict['specificity_micro'] = float(total_tn / specificity_micro_denom) if specificity_micro_denom > 0 else 0.0
         
         # 6. Kappa Score
         metrics_dict['cohen_kappa'] = cohen_kappa_score(y_true, y_pred)

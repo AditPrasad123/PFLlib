@@ -80,6 +80,14 @@ def run(args):
         print("Creating server and clients ...")
         start = time.time()
 
+        if "_quanv" in args.dataset:
+            if model_str == "EfficientNetB0":
+                print(f"⚠️  Auto-switching from EfficientNetB0 to QuanvEfficientNetB0 for {args.dataset} dataset")
+                model_str = "QuanvEfficientNetB0"
+            elif model_str == "TinyViT":
+                print(f"⚠️  Auto-switching from TinyViT to QuanvTinyViT for {args.dataset} dataset")
+                model_str = "QuanvTinyViT"
+        
         # Generate args.model
         if model_str == "MLR": # convex
             if "MNIST" in args.dataset:
@@ -250,6 +258,13 @@ def run(args):
             model.fc = nn.Linear(nf, args.num_classes)
 
             args.model = model.to(args.device)
+            
+        elif model_str == "QuanvEfficientNetB0":
+            args.model = QuanvEfficientNetB0Improved(
+                num_classes=args.num_classes, 
+                pretrained=True, 
+                improvement_level='improved'  # Use the improved version with better performance
+                ).to(args.device)
 
         else:
             raise NotImplementedError
