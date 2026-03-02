@@ -103,7 +103,7 @@ class QuanvTinyViTImproved(nn.Module):
         model = QuanvTinyViTImproved(num_classes=8, improvement_level='standard')  # Classical head
         model = QuanvTinyViTImproved(num_classes=8, improvement_level='improved')  # Quantum head (default)
     """
-    def __init__(self, num_classes=8, pretrained=True, vqc_layers=3, improvement_level='standard'):
+    def __init__(self, num_classes=8, pretrained=True, vqc_layers=3, improvement_level='improved'):
         super().__init__()
 
         # Adapter: 4 → 3
