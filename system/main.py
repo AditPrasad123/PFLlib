@@ -80,6 +80,7 @@ def run(args):
         print("Creating server and clients ...")
         start = time.time()
 
+        
         if "_quanv" in args.dataset:
             if model_str == "EfficientNetB0":
                 print(f"⚠️  Auto-switching from EfficientNetB0 to QuanvEfficientNetB0 for {args.dataset} dataset")
@@ -118,11 +119,12 @@ def run(args):
             else:
                 args.model = DNN(60, 20, num_classes=args.num_classes).to(args.device)
         
+        
         elif model_str == "QuanvEfficientNetB0":
             args.model = QuanvEfficientNetB0Improved(
                 num_classes=args.num_classes, 
                 pretrained=True, 
-                improvement_level='improved'  # Use the improved version with better performance
+                improvement_level='standard'  # Use the improved version with better performance
                 ).to(args.device)
 
         elif model_str == "QuanvTinyViT":
@@ -258,18 +260,14 @@ def run(args):
             model.fc = nn.Linear(nf, args.num_classes)
 
             args.model = model.to(args.device)
-            
-        elif model_str == "QuanvEfficientNetB0":
-            args.model = QuanvEfficientNetB0Improved(
-                num_classes=args.num_classes, 
-                pretrained=True, 
-                improvement_level='improved'  # Use the improved version with better performance
-                ).to(args.device)
 
         else:
             raise NotImplementedError
 
         print(args.model)
+        
+        # Store model name string for result file naming
+        args.model_name = model_str
 
         # Optionally freeze backbone weights and train only the classification head
         if getattr(args, 'freeze_backbone', False):
