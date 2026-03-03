@@ -131,7 +131,7 @@ def run(args):
             args.model = QuanvTinyViTImproved(
                 num_classes=args.num_classes,
                 pretrained=True,
-                improvement_level='improved'  # Use the improved version with better performance
+                improvement_level='standard'  # Use the improved version with better performance
             ).to(args.device)
             
         elif model_str == "ResNet18":
