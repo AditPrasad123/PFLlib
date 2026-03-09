@@ -4,22 +4,25 @@ import os
 import matplotlib.pyplot as plt
 
 
-def average_data(algorithm="", dataset="", goal="", times=10):
-    test_acc = get_all_results_for_one_algo(algorithm, dataset, goal, times)
+def average_data(algorithm="", dataset="", goal="", times=10, model="", prev=0):
+    test_acc = get_all_results_for_one_algo(algorithm, dataset, goal, times, model, prev)
 
     max_accuracy = []
-    for i in range(times):
+    for i in range(len(test_acc)):
         max_accuracy.append(test_acc[i].max())
 
     print("std for best accuracy:", np.std(max_accuracy))
     print("mean for best accuracy:", np.mean(max_accuracy))
 
 
-def get_all_results_for_one_algo(algorithm="", dataset="", goal="", times=10):
+def get_all_results_for_one_algo(algorithm="", dataset="", goal="", times=10, model="", prev=0):
     test_acc = []
     algorithms_list = [algorithm] * times
-    for i in range(times):
-        file_name = dataset + "_" + algorithms_list[i] + "_" + goal + "_" + str(i)
+    for i in range(prev, times):
+        if model:
+            file_name = dataset + "_" + algorithm + "_" + model + "_" + goal + "_" + str(i)
+        else:
+            file_name = dataset + "_" + algorithm + "_" + goal + "_" + str(i)
         test_acc.append(np.array(read_data_then_delete(file_name, delete=False)))
 
     return test_acc
@@ -772,3 +775,234 @@ def plot_curves_across_rounds(file_name, save_path=None):
         print(f"Curves saved to {save_path}")
     
     plt.show()
+
+
+# ==================== CLASS-WISE AND CLIENT-WISE METRICS ====================
+
+def print_classwise_metrics(file_name, round_num=-1):
+    """
+    Extract and print per-class metrics (Precision, Recall, F1, Sensitivity, Specificity, Support)
+    
+    Args:
+        file_name (str): Name of the result file (without .h5 extension)
+        round_num (int): Round number to display (-1 for final round)
+    """
+    results = read_detailed_results(file_name)
+    
+    if 'detailed_metrics' not in results or len(results['detailed_metrics']) == 0:
+        print("⚠️  No detailed metrics found in this results file.")
+        return
+    
+    available_rounds = sorted(results['detailed_metrics'].keys(), key=lambda x: int(x.split('_')[1]))
+    
+    if round_num == -1:
+        round_key = available_rounds[-1]
+    else:
+        round_key = f'round_{round_num}'
+    
+    if round_key not in results['detailed_metrics']:
+        print(f"Round {round_key} not found in results.")
+        return
+    
+    metrics_dict = results['detailed_metrics'][round_key]
+    
+    print("\n" + "="*80)
+    print(f"CLASS-WISE METRICS ({round_key})")
+    print("="*80)
+    
+    # Extract per-class metrics from confusion matrix if available
+    if 'confusion_matrix' in metrics_dict:
+        cm = metrics_dict['confusion_matrix']
+        num_classes = cm.shape[0]
+        
+        print(f"\n{'Class':<8} {'Accuracy':<12} {'Precision':<12} {'Recall':<12} {'F1-Score':<12} {'Support':<10}")
+        print("-" * 68)
+        
+        for class_id in range(num_classes):
+            # Calculate metrics from confusion matrix
+            tp = cm[class_id, class_id]
+            fp = cm[:, class_id].sum() - tp
+            fn = cm[class_id, :].sum() - tp
+            tn = cm.sum() - tp - fp - fn
+            
+            # Per-class accuracy: (TP + TN) / Total
+            accuracy = (tp + tn) / cm.sum() if cm.sum() > 0 else 0.0
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+            recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+            f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+            support = cm[class_id, :].sum()
+            
+            print(f"{class_id:<8} {accuracy:<12.4f} {precision:<12.4f} {recall:<12.4f} {f1:<12.4f} {int(support):<10}")
+    else:
+        print("Confusion matrix not available in this results file.")
+
+
+def print_clientwise_metrics(file_name, round_num=-1):
+    """
+    Extract and print per-client metrics (Accuracy, F1, Precision, Recall, Test Samples)
+    
+    Args:
+        file_name (str): Name of the result file (without .h5 extension)  
+        round_num (int): Round number to display (-1 for final round)
+    """
+    results = read_detailed_results(file_name)
+    
+    if 'detailed_metrics' not in results or len(results['detailed_metrics']) == 0:
+        print("⚠️  No detailed metrics found in this results file.")
+        return
+    
+    available_rounds = sorted(results['detailed_metrics'].keys(), key=lambda x: int(x.split('_')[1]))
+    
+    if round_num == -1:
+        round_key = available_rounds[-1]
+    else:
+        round_key = f'round_{round_num}'
+    
+    if round_key not in results['detailed_metrics']:
+        print(f"Round {round_key} not found in results.")
+        return
+    
+    metrics_dict = results['detailed_metrics'][round_key]
+    
+    print("\n" + "="*100)
+    print(f"CLIENT-WISE METRICS ({round_key})")
+    print("="*100)
+    
+    # Print per-client accuracy distribution
+    if 'client_accuracy_by_client' in metrics_dict:
+        client_accs = metrics_dict['client_accuracy_by_client']
+        
+        # Get per-client metric lists if available
+        client_f1_list = metrics_dict.get('client_f1_macro_list', [np.nan] * len(client_accs))
+        client_precision_list = metrics_dict.get('client_precision_macro_list', [np.nan] * len(client_accs))
+        client_recall_list = metrics_dict.get('client_recall_macro_list', [np.nan] * len(client_accs))
+        
+        print(f"\n{'Client':<10} {'Accuracy':<15} {'F1-Macro':<15} {'Precision':<15} {'Recall':<15}")
+        print("-" * 70)
+        
+        for client_id, acc in enumerate(client_accs):
+            f1 = client_f1_list[client_id] if client_id < len(client_f1_list) else np.nan
+            precision = client_precision_list[client_id] if client_id < len(client_precision_list) else np.nan
+            recall = client_recall_list[client_id] if client_id < len(client_recall_list) else np.nan
+            
+            f1_str = f"{f1:.4f}" if not np.isnan(f1) else "N/A"
+            precision_str = f"{precision:.4f}" if not np.isnan(precision) else "N/A"
+            recall_str = f"{recall:.4f}" if not np.isnan(recall) else "N/A"
+            
+            print(f"{client_id:<10} {acc:<15.4f} {f1_str:<15} {precision_str:<15} {recall_str:<15}")
+        
+        # Print statistics
+        print("-" * 70)
+        print(f"{'Mean':<10} {np.mean(client_accs):<15.4f}")
+        print(f"{'Std Dev':<10} {np.std(client_accs):<15.4f}")
+        print(f"{'Max':<10} {np.max(client_accs):<15.4f}")
+        print(f"{'Min':<10} {np.min(client_accs):<15.4f}")
+    else:
+        print("Per-client metrics not available in this results file.")
+        print("Note: Client-wise metrics are collected during federated training.")
+
+
+def extract_all_metrics_csv(file_name, output_csv=None):
+    """
+    Extract all metrics (overall, class-wise, client-wise) and optionally save to CSV
+    
+    Args:
+        file_name (str): Name of the result file (without .h5 extension)
+        output_csv (str): Optional path to save metrics as CSV
+        
+    Returns:
+        dict: Dictionary containing all extracted metrics
+    """
+    results = read_detailed_results(file_name)
+    all_metrics = {}
+    
+    if 'detailed_metrics' not in results:
+        print("No detailed metrics found.")
+        return all_metrics
+    
+    for round_key, metrics_dict in results['detailed_metrics'].items():
+        round_idx = int(round_key.split('_')[1])
+        all_metrics[round_idx] = {}
+        
+        # Overall metrics
+        all_metrics[round_idx]['overall'] = {
+            'accuracy': metrics_dict.get('accuracy', np.nan),
+            'f1_macro': metrics_dict.get('f1_macro', np.nan),
+            'f1_micro': metrics_dict.get('f1_micro', np.nan),
+            'f1_weighted': metrics_dict.get('f1_weighted', np.nan),
+            'precision_macro': metrics_dict.get('precision_macro', np.nan),
+            'recall_macro': metrics_dict.get('recall_macro', np.nan),
+            'sensitivity_macro': metrics_dict.get('sensitivity_macro', np.nan),
+            'specificity_macro': metrics_dict.get('specificity_macro', np.nan),
+            'kappa': metrics_dict.get('cohen_kappa', np.nan),
+            'mcc': metrics_dict.get('matthews_cc', np.nan),
+            'auc_roc': metrics_dict.get('auc_roc', np.nan),
+            'auc_pr': metrics_dict.get('auc_pr', np.nan),
+        }
+        
+        # Class-wise metrics from confusion matrix
+        if 'confusion_matrix' in metrics_dict:
+            cm = metrics_dict['confusion_matrix']
+            num_classes = cm.shape[0]
+            all_metrics[round_idx]['class_wise'] = {}
+            
+            for class_id in range(num_classes):
+                tp = cm[class_id, class_id]
+                fp = cm[:, class_id].sum() - tp
+                fn = cm[class_id, :].sum() - tp
+                
+                precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+                recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+                f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+                support = int(cm[class_id, :].sum())
+                
+                all_metrics[round_idx]['class_wise'][class_id] = {
+                    'precision': precision,
+                    'recall': recall,
+                    'f1': f1,
+                    'support': support
+                }
+        
+        # Client-wise metrics
+        if 'client_accuracy_by_client' in metrics_dict:
+            all_metrics[round_idx]['client_wise'] = {}
+            client_accs = metrics_dict['client_accuracy_by_client']
+            
+            for client_id, acc in enumerate(client_accs):
+                all_metrics[round_idx]['client_wise'][client_id] = {
+                    'accuracy': acc
+                }
+    
+    # Optionally save to CSV
+    if output_csv:
+        import pandas as pd
+        csv_data = []
+        
+        for round_idx in sorted(all_metrics.keys()):
+            metrics = all_metrics[round_idx]
+            
+            # Add overall metrics
+            row = {'round': round_idx, 'metric_type': 'overall'}
+            if 'overall' in metrics:
+                row.update({f"overall_{k}": v for k, v in metrics['overall'].items()})
+            csv_data.append(row)
+            
+            # Add class-wise metrics
+            if 'class_wise' in metrics:
+                for class_id, class_metrics in metrics['class_wise'].items():
+                    row = {'round': round_idx, 'metric_type': f'class_{class_id}'}
+                    row.update({f"class_{class_id}_{k}": v for k, v in class_metrics.items()})
+                    csv_data.append(row)
+            
+            # Add client-wise metrics
+            if 'client_wise' in metrics:
+                for client_id, client_metrics in metrics['client_wise'].items():
+                    row = {'round': round_idx, 'metric_type': f'client_{client_id}'}
+                    row.update({f"client_{client_id}_{k}": v for k, v in client_metrics.items()})
+                    csv_data.append(row)
+        
+        df = pd.DataFrame(csv_data)
+        df.to_csv(output_csv, index=False)
+        print(f"\nMetrics saved to {output_csv}")
+    
+    return all_metrics

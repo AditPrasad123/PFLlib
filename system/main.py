@@ -490,7 +490,8 @@ def run(args):
     
 
     # Global average
-    average_data(dataset=args.dataset, algorithm=args.algorithm, goal=args.goal, times=args.times)
+    model_name = getattr(args, 'model_name', '')
+    average_data(dataset=args.dataset, algorithm=args.algorithm, goal=args.goal, times=args.times, model=model_name, prev=args.prev)
 
     print("All done!")
 

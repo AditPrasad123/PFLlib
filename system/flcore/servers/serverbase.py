@@ -374,7 +374,7 @@ class Server(object):
 
     def test_metrics_detailed(self):
         """
-        Collect detailed metrics from all clients and aggregate them.
+        Collect detailed metrics from all clients and aggregate them, including per-class and per-client breakdowns.
         
         Returns:
             dict: Aggregated metrics across all clients
@@ -418,13 +418,21 @@ class Server(object):
             'auc_pr': np.nanmean([m.get('auc_pr', np.nan) for m in all_detailed_metrics if 'auc_pr' in m]),
         }
 
+        # Store per-client metrics
         client_accuracies = [m['accuracy'] for m in all_detailed_metrics if 'accuracy' in m]
         if client_accuracies:
             aggregated_metrics['client_accuracy_by_client'] = client_accuracies
             aggregated_metrics['client_accuracy_mean'] = float(np.nanmean(client_accuracies))
             aggregated_metrics['client_accuracy_variance'] = float(np.nanvar(client_accuracies))
+            
+            # Store other per-client metrics (F1, Precision, Recall, etc.)
+            for metric_key in ['f1_macro', 'f1_weighted', 'precision_macro', 'recall_macro', 'sensitivity_macro', 'specificity_macro']:
+                client_values = [m.get(metric_key, np.nan) for m in all_detailed_metrics]
+                valid_values = [v for v in client_values if isinstance(v, (int, float)) and not np.isnan(v)]
+                if valid_values:
+                    aggregated_metrics[f'client_{metric_key}_list'] = client_values
         
-        # Add per-class metrics if available
+        # Add per-class metrics from aggregated confusion matrix
         if any('confusion_matrix' in m for m in all_detailed_metrics):
             try:
                 # Aggregate confusion matrices
@@ -433,8 +441,27 @@ class Server(object):
                     if 'confusion_matrix' in m:
                         cm_total += m['confusion_matrix']
                 aggregated_metrics['confusion_matrix'] = cm_total
-            except Exception:
-                pass
+                
+                # Compute and store per-class metrics from confusion matrix
+                aggregated_metrics['per_class_metrics'] = {}
+                for class_id in range(self.num_classes):
+                    tp = cm_total[class_id, class_id]
+                    fp = cm_total[:, class_id].sum() - tp
+                    fn = cm_total[class_id, :].sum() - tp
+                    
+                    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+                    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+                    f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+                    support = int(cm_total[class_id, :].sum())
+                    
+                    aggregated_metrics['per_class_metrics'][class_id] = {
+                        'precision': float(precision),
+                        'recall': float(recall),
+                        'f1': float(f1),
+                        'support': support
+                    }
+            except Exception as e:
+                print(f"Warning: Could not aggregate confusion matrices: {e}")
         
         # Add ROC and PR curves if available
         # Store both individual curves and a representative curve (first valid one)
