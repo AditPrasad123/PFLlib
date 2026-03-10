@@ -77,6 +77,8 @@ class MetricsCalculator:
         
         # 1. Accuracy
         metrics_dict['accuracy'] = accuracy_score(y_true, y_pred)
+        # In single-label multiclass, micro accuracy equals overall accuracy.
+        metrics_dict['accuracy_micro'] = metrics_dict['accuracy']
         # print(f"[DEBUG] Accuracy: {metrics_dict['accuracy']:.4f}")
         
         # 2. Precision (macro, micro, weighted)
@@ -108,6 +110,8 @@ class MetricsCalculator:
         metrics_dict['recall_weighted'] = recall_score(
             y_true, y_pred, average='weighted', zero_division=0
         )
+        # Balanced accuracy for multiclass corresponds to macro recall.
+        metrics_dict['accuracy_macro'] = metrics_dict['recall_macro']
         # print(f"[DEBUG] Recall - macro: {metrics_dict['recall_macro']:.4f}, weighted: {metrics_dict['recall_weighted']:.4f}")
         
         # Per-class recall

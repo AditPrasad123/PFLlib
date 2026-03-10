@@ -4,6 +4,80 @@ import os
 import matplotlib.pyplot as plt
 
 
+def _compute_micro_sens_spec_from_confusion_matrix(cm):
+    """Compute micro sensitivity/specificity from a multiclass confusion matrix."""
+    cm = np.asarray(cm)
+    if cm.ndim != 2 or cm.shape[0] != cm.shape[1]:
+        return np.nan, np.nan
+
+    tp_total = float(np.trace(cm))
+    total = float(cm.sum())
+    fn_total = total - tp_total
+    fp_total = total - tp_total
+    # One-vs-rest TN accumulated across classes.
+    tn_total = float(cm.shape[0] * total - tp_total - fn_total - fp_total)
+
+    sensitivity_micro = tp_total / (tp_total + fn_total) if (tp_total + fn_total) > 0 else np.nan
+    specificity_micro = tn_total / (tn_total + fp_total) if (tn_total + fp_total) > 0 else np.nan
+    return sensitivity_micro, specificity_micro
+
+
+def _compute_micro_macro_accuracy_from_confusion_matrix(cm):
+    """Compute micro/macro accuracy from a multiclass confusion matrix."""
+    cm = np.asarray(cm)
+    if cm.ndim != 2 or cm.shape[0] != cm.shape[1]:
+        return np.nan, np.nan
+
+    total = float(cm.sum())
+    accuracy_micro = float(np.trace(cm) / total) if total > 0 else np.nan
+
+    row_sums = cm.sum(axis=1).astype(np.float64)
+    per_class_recall = np.divide(
+        np.diag(cm).astype(np.float64),
+        row_sums,
+        out=np.zeros_like(row_sums, dtype=np.float64),
+        where=row_sums > 0
+    )
+    accuracy_macro = float(np.mean(per_class_recall)) if per_class_recall.size > 0 else np.nan
+    return accuracy_micro, accuracy_macro
+
+
+def _fill_missing_micro_sens_spec(metrics_dict):
+    """Fill missing micro sensitivity/specificity from confusion_matrix when available."""
+    if not isinstance(metrics_dict, dict):
+        return
+    if 'confusion_matrix' not in metrics_dict:
+        return
+
+    needs_sens = 'sensitivity_micro' not in metrics_dict
+    needs_spec = 'specificity_micro' not in metrics_dict
+    if not (needs_sens or needs_spec):
+        return
+
+    sensitivity_micro, specificity_micro = _compute_micro_sens_spec_from_confusion_matrix(metrics_dict['confusion_matrix'])
+    if needs_sens and not np.isnan(sensitivity_micro):
+        metrics_dict['sensitivity_micro'] = float(sensitivity_micro)
+    if needs_spec and not np.isnan(specificity_micro):
+        metrics_dict['specificity_micro'] = float(specificity_micro)
+
+
+def _fill_missing_micro_macro_accuracy(metrics_dict):
+    """Fill missing micro/macro accuracy from confusion_matrix when available."""
+    if not isinstance(metrics_dict, dict):
+        return
+    if 'confusion_matrix' not in metrics_dict:
+        return
+
+    accuracy_micro, accuracy_macro = _compute_micro_macro_accuracy_from_confusion_matrix(metrics_dict['confusion_matrix'])
+    # Always synchronize with confusion matrix when available to avoid drift
+    # from unweighted client-level averaging in older result files.
+    if not np.isnan(accuracy_micro):
+        metrics_dict['accuracy_micro'] = float(accuracy_micro)
+        metrics_dict['accuracy'] = float(accuracy_micro)
+    if not np.isnan(accuracy_macro):
+        metrics_dict['accuracy_macro'] = float(accuracy_macro)
+
+
 def average_data(algorithm="", dataset="", goal="", times=10, model="", prev=0):
     test_acc = get_all_results_for_one_algo(algorithm, dataset, goal, times, model, prev)
 
@@ -85,6 +159,11 @@ def read_detailed_results(file_name):
                     else:
                         # Regular dataset
                         results['detailed_metrics'][round_name][key] = np.array(round_group[key][()])
+
+            # Backfill missing micro metrics from confusion matrix for older result files.
+            for round_name in results['detailed_metrics']:
+                _fill_missing_micro_macro_accuracy(results['detailed_metrics'][round_name])
+                _fill_missing_micro_sens_spec(results['detailed_metrics'][round_name])
         
         # Read FL-specific metrics
         if 'fl_metrics' in hf:
@@ -160,8 +239,13 @@ def print_detailed_metrics_summary(file_name):
                             key=lambda x: int(x.split('_')[1]))
         final_metrics = results['detailed_metrics'][final_round_idx]
         
+        print("\n--- Accuracy (Macro, Micro, Overall) ---")
+        if 'accuracy_macro' in final_metrics:
+            print(f"  Macro: {final_metrics['accuracy_macro']:.4f}")
+        if 'accuracy_micro' in final_metrics:
+            print(f"  Micro: {final_metrics['accuracy_micro']:.4f}")
         if 'accuracy' in final_metrics:
-            print(f"Accuracy: {final_metrics['accuracy']:.4f}")
+            print(f"  Overall: {final_metrics['accuracy']:.4f}")
         
         print("\n--- Precision (Macro, Micro, Weighted) ---")
         if 'precision_macro' in final_metrics:
@@ -649,8 +733,13 @@ def plot_roc_and_pr_curves(file_name, round_num=-1, save_path=None):
     # Create summary text
     summary_text = "=== METRICS SUMMARY ===\n\n"
     
+    summary_text += "ACCURACY:\n"
+    if 'accuracy_macro' in metrics_dict:
+        summary_text += f"  Macro: {metrics_dict['accuracy_macro']:.4f}\n"
+    if 'accuracy_micro' in metrics_dict:
+        summary_text += f"  Micro: {metrics_dict['accuracy_micro']:.4f}\n"
     if 'accuracy' in metrics_dict:
-        summary_text += f"Accuracy: {metrics_dict['accuracy']:.4f}\n"
+        summary_text += f"  Overall: {metrics_dict['accuracy']:.4f}\n"
     
     summary_text += "\nPRECISION:\n"
     if 'precision_macro' in metrics_dict:
@@ -927,13 +1016,19 @@ def extract_all_metrics_csv(file_name, output_csv=None):
         # Overall metrics
         all_metrics[round_idx]['overall'] = {
             'accuracy': metrics_dict.get('accuracy', np.nan),
+            'accuracy_micro': metrics_dict.get('accuracy_micro', np.nan),
+            'accuracy_macro': metrics_dict.get('accuracy_macro', np.nan),
             'f1_macro': metrics_dict.get('f1_macro', np.nan),
             'f1_micro': metrics_dict.get('f1_micro', np.nan),
             'f1_weighted': metrics_dict.get('f1_weighted', np.nan),
             'precision_macro': metrics_dict.get('precision_macro', np.nan),
+            'precision_micro': metrics_dict.get('precision_micro', np.nan),
             'recall_macro': metrics_dict.get('recall_macro', np.nan),
+            'recall_micro': metrics_dict.get('recall_micro', np.nan),
             'sensitivity_macro': metrics_dict.get('sensitivity_macro', np.nan),
+            'sensitivity_micro': metrics_dict.get('sensitivity_micro', np.nan),
             'specificity_macro': metrics_dict.get('specificity_macro', np.nan),
+            'specificity_micro': metrics_dict.get('specificity_micro', np.nan),
             'kappa': metrics_dict.get('cohen_kappa', np.nan),
             'mcc': metrics_dict.get('matthews_cc', np.nan),
             'auc_roc': metrics_dict.get('auc_roc', np.nan),

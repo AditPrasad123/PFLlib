@@ -393,12 +393,28 @@ class Server(object):
         
         if not all_detailed_metrics:
             return {}
+
+        client_sample_counts = [float(m.get('test_samples', 0)) for m in all_detailed_metrics]
+        total_weight = float(np.sum(client_sample_counts))
+
+        def weighted_metric(metric_key):
+            vals = [m.get(metric_key, np.nan) for m in all_detailed_metrics]
+            num = 0.0
+            den = 0.0
+            for v, w in zip(vals, client_sample_counts):
+                if isinstance(v, (int, float, np.floating)) and not np.isnan(v) and w > 0:
+                    num += float(v) * float(w)
+                    den += float(w)
+            return (num / den) if den > 0 else np.nan
         
         # Aggregate metrics across clients
         aggregated_metrics = {
             'total_test_samples': total_samples,
             'num_clients': len(all_detailed_metrics),
-            'accuracy': np.nanmean([m['accuracy'] for m in all_detailed_metrics if 'accuracy' in m]),
+            # Accuracy and micro-accuracy should be sample-weighted, not plain client mean.
+            'accuracy': weighted_metric('accuracy'),
+            'accuracy_micro': weighted_metric('accuracy_micro'),
+            'accuracy_macro': np.nanmean([m.get('accuracy_macro', np.nan) for m in all_detailed_metrics if 'accuracy_macro' in m]),
             'f1_macro': np.nanmean([m['f1_macro'] for m in all_detailed_metrics if 'f1_macro' in m]),
             'f1_micro': np.nanmean([m['f1_micro'] for m in all_detailed_metrics if 'f1_micro' in m]),
             'f1_weighted': np.nanmean([m['f1_weighted'] for m in all_detailed_metrics if 'f1_weighted' in m]),
@@ -409,8 +425,10 @@ class Server(object):
             'recall_micro': np.nanmean([m['recall_micro'] for m in all_detailed_metrics if 'recall_micro' in m]),
             'recall_weighted': np.nanmean([m['recall_weighted'] for m in all_detailed_metrics if 'recall_weighted' in m]),
             'sensitivity_macro': np.nanmean([m.get('sensitivity_macro', np.nan) for m in all_detailed_metrics if 'sensitivity_macro' in m]),
+            'sensitivity_micro': np.nanmean([m.get('sensitivity_micro', np.nan) for m in all_detailed_metrics if 'sensitivity_micro' in m]),
             'sensitivity_weighted': np.nanmean([m.get('sensitivity_weighted', np.nan) for m in all_detailed_metrics if 'sensitivity_weighted' in m]),
             'specificity_macro': np.nanmean([m.get('specificity_macro', np.nan) for m in all_detailed_metrics if 'specificity_macro' in m]),
+            'specificity_micro': np.nanmean([m.get('specificity_micro', np.nan) for m in all_detailed_metrics if 'specificity_micro' in m]),
             'specificity_weighted': np.nanmean([m.get('specificity_weighted', np.nan) for m in all_detailed_metrics if 'specificity_weighted' in m]),
             'cohen_kappa': np.nanmean([m['cohen_kappa'] for m in all_detailed_metrics if 'cohen_kappa' in m]),
             'matthews_cc': np.nanmean([m['matthews_cc'] for m in all_detailed_metrics if 'matthews_cc' in m]),
@@ -441,6 +459,25 @@ class Server(object):
                     if 'confusion_matrix' in m:
                         cm_total += m['confusion_matrix']
                 aggregated_metrics['confusion_matrix'] = cm_total
+
+                # Prefer global metrics derived from the aggregated confusion matrix.
+                total_cm = float(np.sum(cm_total))
+                if total_cm > 0:
+                    accuracy_micro_global = float(np.trace(cm_total) / total_cm)
+                    aggregated_metrics['accuracy'] = accuracy_micro_global
+                    aggregated_metrics['accuracy_micro'] = accuracy_micro_global
+
+                    row_sums = np.sum(cm_total, axis=1).astype(np.float64)
+                    per_class_recall = np.divide(
+                        np.diag(cm_total).astype(np.float64),
+                        row_sums,
+                        out=np.zeros_like(row_sums, dtype=np.float64),
+                        where=row_sums > 0
+                    )
+                    # Balanced accuracy: mean recall over classes present in evaluation.
+                    valid = row_sums > 0
+                    if np.any(valid):
+                        aggregated_metrics['accuracy_macro'] = float(np.mean(per_class_recall[valid]))
                 
                 # Compute and store per-class metrics from confusion matrix
                 aggregated_metrics['per_class_metrics'] = {}
