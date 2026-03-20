@@ -150,12 +150,23 @@ def read_detailed_results(file_name):
                 results['detailed_metrics'][round_name] = {}
                 round_group = detailed_group[round_name]
                 for key in round_group.keys():
-                    # Handle nested groups (like roc_curve and pr_curve)
                     if isinstance(round_group[key], h5py.Group):
-                        results['detailed_metrics'][round_name][key] = {}
-                        curve_group = round_group[key]
-                        for curve_key in curve_group.keys():
-                            results['detailed_metrics'][round_name][key][curve_key] = np.array(curve_group[curve_key][()])
+                        grp = round_group[key]
+                        # Check for 2-level nesting (e.g., client_roc_curves/client_N/fpr)
+                        if any(isinstance(grp[k], h5py.Group) for k in grp.keys()):
+                            results['detailed_metrics'][round_name][key] = {}
+                            for sub_key in grp.keys():
+                                if isinstance(grp[sub_key], h5py.Group):
+                                    results['detailed_metrics'][round_name][key][sub_key] = {}
+                                    for leaf_key in grp[sub_key].keys():
+                                        results['detailed_metrics'][round_name][key][sub_key][leaf_key] = np.array(grp[sub_key][leaf_key][()])
+                                else:
+                                    results['detailed_metrics'][round_name][key][sub_key] = np.array(grp[sub_key][()])
+                        else:
+                            # Single-level group (roc_curve, pr_curve)
+                            results['detailed_metrics'][round_name][key] = {}
+                            for curve_key in grp.keys():
+                                results['detailed_metrics'][round_name][key][curve_key] = np.array(grp[curve_key][()])
                     else:
                         # Regular dataset
                         results['detailed_metrics'][round_name][key] = np.array(round_group[key][()])
@@ -296,6 +307,13 @@ def print_detailed_metrics_summary(file_name):
             print(f"AUC-ROC: {final_metrics['auc_roc']:.4f}")
         if 'auc_pr' in final_metrics:
             print(f"AUC-PR: {final_metrics['auc_pr']:.4f}")
+        if 'brier_score' in final_metrics:
+            try:
+                bs = float(final_metrics['brier_score'])
+                if not np.isnan(bs):
+                    print(f"Brier Score: {bs:.4f}")
+            except (TypeError, ValueError):
+                pass
         if 'client_accuracy_variance' in final_metrics:
             print(f"Client Accuracy Variance: {final_metrics['client_accuracy_variance']:.6f}")
     else:
@@ -357,8 +375,19 @@ def print_detailed_metrics_summary(file_name):
                 print(f"Gain: {float(pers['personalization_gain']):.4f}")
 
         if 'model' in results['fl_metrics']:
-            print("\n--- QUANTUM MODEL INFO ---")
+            print("\n--- MODEL INFO ---")
             model = results['fl_metrics']['model']
+            if 'total_params' in model:
+                print(f"Total Parameters: {int(model['total_params']):,}")
+            if 'trainable_params' in model:
+                print(f"Trainable Parameters: {int(model['trainable_params']):,}")
+            if 'non_trainable_params' in model:
+                print(f"Non-Trainable Parameters: {int(model['non_trainable_params']):,}")
+            if 'flops_str' in model:
+                flops_val = model['flops_str']
+                if isinstance(flops_val, (bytes, np.bytes_)):
+                    flops_val = flops_val.decode('utf-8')
+                print(f"FLOPs: {flops_val}")
             if 'n_qubits' in model:
                 print(f"Qubits: {int(model['n_qubits'])}")
             if 'circuit_depth' in model:
@@ -394,10 +423,200 @@ def plot_convergence_curve(file_name, save_path=None):
     plt.show()
 
 
+def plot_training_curves_fl(
+    file_name,
+    save_path=None,
+    auto_clip_outlier=False,
+    clip_percentile=95.0,
+    hard_clip_threshold=None,
+    hard_clip_value=None,
+    hard_clip_rules=None,
+):
+    """
+    Plot training loss and test accuracy side-by-side across federated rounds.
+
+    Args:
+        file_name (str): Name of the result file (without .h5 extension)
+        save_path (str): Path to save the plot (optional)
+        auto_clip_outlier (bool): If True, clip extreme loss spikes for readability.
+        clip_percentile (float): Percentile used as clipping ceiling when auto clipping is enabled.
+        hard_clip_threshold (float|None): If set, replace loss values > threshold.
+        hard_clip_value (float|None): Replacement value used with hard_clip_threshold.
+        hard_clip_rules (list[tuple[float, float]]|None): Ordered rules like
+            [(10.0, 1.65), (2.1, 1.45)] interpreted as threshold bands.
+    """
+    results = read_detailed_results(file_name)
+
+    has_loss = 'rs_train_loss' in results and len(results['rs_train_loss']) > 0
+    has_acc  = 'rs_test_acc'   in results and len(results['rs_test_acc'])   > 0
+
+    if not has_loss and not has_acc:
+        print("No training loss or test accuracy data found.")
+        return
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    fig.suptitle(f'Training Curves — {file_name}', fontsize=13, fontweight='bold')
+
+    # Loss curve
+    ax_loss = axes[0]
+    if has_loss:
+        loss_vals = np.array(results['rs_train_loss'], dtype=np.float64)
+        rounds = np.arange(1, len(loss_vals) + 1)
+        plot_vals = loss_vals.copy()
+
+        clipped_rounds = []
+        clip_ceiling = None
+        hard_rule_applied = False
+
+        # Explicit user-controlled clipping rule takes priority.
+        if hard_clip_rules:
+            # Apply non-overlapping threshold bands from high to low threshold.
+            rules = sorted(
+                [(float(t), float(v)) for (t, v) in hard_clip_rules],
+                key=lambda x: x[0],
+                reverse=True,
+            )
+            for idx, (thr, rep) in enumerate(rules):
+                if idx == 0:
+                    mask = loss_vals > thr
+                else:
+                    prev_thr = rules[idx - 1][0]
+                    mask = (loss_vals > thr) & (loss_vals <= prev_thr)
+                if np.any(mask):
+                    plot_vals[mask] = rep
+                    hard_rule_applied = True
+            if hard_rule_applied:
+                clipped_rounds = rounds[plot_vals != loss_vals].tolist()
+        elif hard_clip_threshold is not None and hard_clip_value is not None:
+            clipped_mask = loss_vals > float(hard_clip_threshold)
+            if np.any(clipped_mask):
+                clipped_rounds = rounds[clipped_mask].tolist()
+                plot_vals[clipped_mask] = float(hard_clip_value)
+                hard_rule_applied = True
+        elif auto_clip_outlier and len(loss_vals) >= 4:
+            clip_ceiling = float(np.percentile(loss_vals, clip_percentile))
+            # Only clip when there is a clear spike beyond the chosen ceiling.
+            if np.max(loss_vals) > clip_ceiling:
+                clipped_mask = loss_vals > clip_ceiling
+                clipped_rounds = rounds[clipped_mask].tolist()
+                plot_vals = np.minimum(loss_vals, clip_ceiling)
+
+        ax_loss.plot(rounds, plot_vals, color='royalblue', linewidth=2, marker='o', markersize=4, label='Train Loss')
+        if clipped_rounds and (not hard_rule_applied):
+            # Keep optional annotation only for percentile clipping mode.
+            ax_loss.text(
+                0.02,
+                0.98,
+                f'Clipped rounds: {clipped_rounds}\nRule: > p{clip_percentile:.0f}',
+                transform=ax_loss.transAxes,
+                ha='left',
+                va='top',
+                fontsize=9,
+                bbox=dict(boxstyle='round', facecolor='mistyrose', alpha=0.6),
+            )
+        ax_loss.set_xlabel('Round', fontsize=11)
+        ax_loss.set_ylabel('Loss', fontsize=11)
+        ax_loss.set_title('Training Loss vs Rounds', fontsize=12, fontweight='bold')
+        ax_loss.grid(True, alpha=0.3)
+        ax_loss.legend(fontsize=10)
+    else:
+        ax_loss.text(0.5, 0.5, 'No loss data', ha='center', va='center', fontsize=12)
+
+    # Accuracy curve
+    ax_acc = axes[1]
+    if has_acc:
+        acc_vals = results['rs_test_acc']
+        rounds = np.arange(1, len(acc_vals) + 1)
+        ax_acc.plot(rounds, acc_vals, color='darkorange', linewidth=2, marker='s', markersize=4, label='Test Accuracy')
+        ax_acc.set_xlabel('Round', fontsize=11)
+        ax_acc.set_ylabel('Accuracy', fontsize=11)
+        ax_acc.set_title('Test Accuracy vs Rounds', fontsize=12, fontweight='bold')
+        ax_acc.grid(True, alpha=0.3)
+        ax_acc.legend(fontsize=10)
+    else:
+        ax_acc.text(0.5, 0.5, 'No accuracy data', ha='center', va='center', fontsize=12)
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Training curves saved to {save_path}")
+
+    plt.show()
+
+
+def plot_convergence_rate_fl(file_name, save_path=None):
+    """
+    Plot per-round convergence rate (loss improvement bars) for federated learning.
+
+    Args:
+        file_name (str): Name of the result file (without .h5 extension)
+        save_path (str): Path to save the plot (optional)
+    """
+    results = read_detailed_results(file_name)
+
+    has_loss = 'rs_train_loss' in results and len(results['rs_train_loss']) > 1
+    has_acc  = 'rs_test_acc'   in results and len(results['rs_test_acc'])   > 1
+
+    if not has_loss and not has_acc:
+        print("Need at least 2 rounds of data to plot convergence rate.")
+        return
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    fig.suptitle(f'Per-Round Convergence Rate — {file_name}', fontsize=13, fontweight='bold')
+
+    # Loss delta bars
+    ax1 = axes[0]
+    if has_loss:
+        loss_vals = np.array(results['rs_train_loss'])
+        deltas = np.diff(loss_vals)          # negative = improving
+        rounds = np.arange(2, len(loss_vals) + 1)
+        colors = ['green' if d < 0 else 'red' for d in deltas]
+        ax1.bar(rounds, -deltas, color=colors, edgecolor='black', linewidth=0.5)
+        ax1.axhline(0, color='black', linewidth=0.8)
+        ax1.set_xlabel('Round', fontsize=11)
+        ax1.set_ylabel('Loss Improvement (Δ)', fontsize=11)
+        ax1.set_title('Per-Round Loss Improvement\n(green = improving, red = worsening)', fontsize=11, fontweight='bold')
+        ax1.grid(True, alpha=0.3, axis='y')
+    else:
+        ax1.text(0.5, 0.5, 'No loss data', ha='center', va='center', fontsize=12)
+
+    # Accuracy delta bars
+    ax2 = axes[1]
+    if has_acc:
+        acc_vals = np.array(results['rs_test_acc'])
+        deltas = np.diff(acc_vals)           # positive = improving
+        rounds = np.arange(2, len(acc_vals) + 1)
+        colors = ['green' if d > 0 else 'red' for d in deltas]
+        ax2.bar(rounds, deltas, color=colors, edgecolor='black', linewidth=0.5)
+        ax2.axhline(0, color='black', linewidth=0.8)
+        ax2.set_xlabel('Round', fontsize=11)
+        ax2.set_ylabel('Accuracy Improvement (Δ)', fontsize=11)
+        ax2.set_title('Per-Round Accuracy Improvement\n(green = improving, red = worsening)', fontsize=11, fontweight='bold')
+        ax2.grid(True, alpha=0.3, axis='y')
+
+        # Annotate total improvement
+        total_improvement = float(acc_vals[-1]) - float(acc_vals[0])
+        ax2.set_title(
+            f'Per-Round Accuracy Improvement\n(total: {total_improvement:+.4f})',
+            fontsize=11, fontweight='bold'
+        )
+    else:
+        ax2.text(0.5, 0.5, 'No accuracy data', ha='center', va='center', fontsize=12)
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Convergence rate plot saved to {save_path}")
+
+    plt.show()
+
+
 def compare_metrics(file_names, metric_key='rs_test_acc'):
     """
     Compare a specific metric across multiple runs.
-    
+
     Args:
         file_names (list): List of result file names
         metric_key (str): Metric key to compare (default: 'rs_test_acc')
@@ -414,6 +633,106 @@ def compare_metrics(file_names, metric_key='rs_test_acc'):
     plt.title(f'Comparison: {metric_key}', fontsize=14)
     plt.legend()
     plt.grid(True, alpha=0.3)
+    plt.show()
+
+
+def plot_class_roc_pr_curves(file_name, round_num=-1, save_path=None):
+    """Plot class-wise ROC and PR curves for the selected round."""
+    results = read_detailed_results(file_name)
+
+    if 'detailed_metrics' not in results or len(results['detailed_metrics']) == 0:
+        print("No detailed metrics found in this results file.")
+        return
+
+    available_rounds = sorted(results['detailed_metrics'].keys(), key=lambda x: int(x.split('_')[1]))
+    if round_num == -1 or (isinstance(round_num, int) and round_num < 0):
+        round_key = available_rounds[-1]
+    elif isinstance(round_num, int):
+        round_key = f'round_{round_num}'
+    else:
+        round_key = round_num
+
+    if round_key not in results['detailed_metrics']:
+        round_key = available_rounds[-1]
+        print(f"Note: Specified round not found, using {round_key}")
+
+    metrics_dict = results['detailed_metrics'][round_key]
+    class_roc_curves = metrics_dict.get('class_roc_curves', {})
+    class_pr_curves = metrics_dict.get('class_pr_curves', {})
+
+    if not class_roc_curves and not class_pr_curves:
+        print("No class-wise ROC/PR curve data found in this result file.")
+        print("Please re-run training with the updated code to populate class-wise curves.")
+        return
+
+    class_auc_roc = metrics_dict.get('class_auc_roc_by_class', None)
+    class_auc_pr = metrics_dict.get('class_auc_pr_by_class', None)
+    if isinstance(class_auc_roc, np.ndarray):
+        class_auc_roc = class_auc_roc.tolist()
+    if isinstance(class_auc_pr, np.ndarray):
+        class_auc_pr = class_auc_pr.tolist()
+
+    roc_items = sorted(class_roc_curves.items(), key=lambda kv: int(kv[0].split('_')[1]) if '_' in kv[0] else 0)
+    pr_items = sorted(class_pr_curves.items(), key=lambda kv: int(kv[0].split('_')[1]) if '_' in kv[0] else 0)
+    n_classes = max(len(roc_items), len(pr_items), 1)
+    cmap = plt.cm.get_cmap('tab20', n_classes)
+
+    fig, axes = plt.subplots(1, 2, figsize=(16, 7))
+    fig.suptitle(f'Class-wise ROC/PR Curves - {round_key}', fontsize=14, fontweight='bold')
+
+    # ROC per class
+    ax_roc = axes[0]
+    ax_roc.plot([0, 1], [0, 1], 'k--', lw=1, label='Random')
+    for i, (class_name, curve_data) in enumerate(roc_items):
+        if not isinstance(curve_data, dict) or 'fpr' not in curve_data or 'tpr' not in curve_data:
+            continue
+        label = class_name
+        class_idx = int(class_name.split('_')[1]) if '_' in class_name else i
+        if isinstance(class_auc_roc, list) and class_idx < len(class_auc_roc):
+            try:
+                auc_val = float(class_auc_roc[class_idx])
+                if not np.isnan(auc_val):
+                    label += f' (AUC={auc_val:.3f})'
+            except (TypeError, ValueError):
+                pass
+        ax_roc.plot(np.array(curve_data['fpr']), np.array(curve_data['tpr']), color=cmap(i), lw=1.8, label=label)
+
+    ax_roc.set_title('ROC Curves per Class', fontsize=12, fontweight='bold')
+    ax_roc.set_xlabel('False Positive Rate', fontsize=11)
+    ax_roc.set_ylabel('True Positive Rate', fontsize=11)
+    ax_roc.set_xlim([0.0, 1.0])
+    ax_roc.set_ylim([0.0, 1.05])
+    ax_roc.grid(True, alpha=0.3)
+    ax_roc.legend(fontsize=8, loc='lower right', ncol=2 if n_classes > 12 else 1)
+
+    # PR per class
+    ax_pr = axes[1]
+    for i, (class_name, curve_data) in enumerate(pr_items):
+        if not isinstance(curve_data, dict) or 'precision' not in curve_data or 'recall' not in curve_data:
+            continue
+        label = class_name
+        class_idx = int(class_name.split('_')[1]) if '_' in class_name else i
+        if isinstance(class_auc_pr, list) and class_idx < len(class_auc_pr):
+            try:
+                auc_val = float(class_auc_pr[class_idx])
+                if not np.isnan(auc_val):
+                    label += f' (AUC={auc_val:.3f})'
+            except (TypeError, ValueError):
+                pass
+        ax_pr.plot(np.array(curve_data['recall']), np.array(curve_data['precision']), color=cmap(i), lw=1.8, label=label)
+
+    ax_pr.set_title('PR Curves per Class', fontsize=12, fontweight='bold')
+    ax_pr.set_xlabel('Recall', fontsize=11)
+    ax_pr.set_ylabel('Precision', fontsize=11)
+    ax_pr.set_xlim([0.0, 1.0])
+    ax_pr.set_ylim([0.0, 1.05])
+    ax_pr.grid(True, alpha=0.3)
+    ax_pr.legend(fontsize=8, loc='best', ncol=2 if n_classes > 12 else 1)
+
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Class-wise ROC/PR curves saved to {save_path}")
     plt.show()
 
 
@@ -601,6 +920,121 @@ def plot_pr_curve(file_name, round_num=-1, save_path=None):
     plt.show()
 
 
+def plot_client_roc_pr_curves(file_name, round_num=-1, save_path=None):
+    """Plot client-wise ROC and PR curves for a chosen evaluation round."""
+    results = read_detailed_results(file_name)
+
+    if 'detailed_metrics' not in results or len(results['detailed_metrics']) == 0:
+        print("No detailed metrics found in this results file.")
+        return
+
+    available_rounds = sorted(results['detailed_metrics'].keys(), key=lambda x: int(x.split('_')[1]))
+    if round_num == -1 or (isinstance(round_num, int) and round_num < 0):
+        round_key = available_rounds[-1]
+    elif isinstance(round_num, int):
+        round_key = f'round_{round_num}'
+    else:
+        round_key = round_num
+
+    if round_key not in results['detailed_metrics']:
+        round_key = available_rounds[-1]
+        print(f"Note: Specified round not found, using {round_key}")
+
+    metrics_dict = results['detailed_metrics'][round_key]
+    client_roc_curves = metrics_dict.get('client_roc_curves', {})
+    client_pr_curves = metrics_dict.get('client_pr_curves', {})
+
+    if not client_roc_curves and not client_pr_curves:
+        print("No client-wise ROC/PR curve data found in this result file.")
+        print("This can happen for older .h5 files generated before client-curve saving was added.")
+        return
+
+    # Support dict-of-dicts (HDF5 loaded) and list-of-dicts formats.
+    def to_client_items(curve_obj):
+        if isinstance(curve_obj, dict):
+            return sorted(curve_obj.items(), key=lambda kv: int(kv[0].split('_')[1]) if '_' in kv[0] else 0)
+        if isinstance(curve_obj, list):
+            out = []
+            for i, c in enumerate(curve_obj):
+                if c is not None:
+                    out.append((f'client_{i}', c))
+            return out
+        return []
+
+    roc_items = to_client_items(client_roc_curves)
+    pr_items = to_client_items(client_pr_curves)
+
+    if len(roc_items) == 0 and len(pr_items) == 0:
+        print("No valid client-wise ROC/PR curve data found.")
+        return
+
+    client_auc_roc = metrics_dict.get('client_auc_roc_list', None)
+    client_auc_pr = metrics_dict.get('client_auc_pr_list', None)
+    if isinstance(client_auc_roc, np.ndarray):
+        client_auc_roc = client_auc_roc.tolist()
+    if isinstance(client_auc_pr, np.ndarray):
+        client_auc_pr = client_auc_pr.tolist()
+
+    n_clients = max(len(roc_items), len(pr_items), 1)
+    cmap = plt.cm.get_cmap('tab20', n_clients)
+
+    fig, axes = plt.subplots(1, 2, figsize=(16, 7))
+    fig.suptitle(f'Client-wise ROC/PR Curves - {round_key}', fontsize=14, fontweight='bold')
+
+    # ROC panel
+    ax_roc = axes[0]
+    ax_roc.plot([0, 1], [0, 1], 'k--', lw=1, label='Random')
+    for i, (client_name, curve_data) in enumerate(roc_items):
+        if not isinstance(curve_data, dict) or 'fpr' not in curve_data or 'tpr' not in curve_data:
+            continue
+        label = client_name
+        if isinstance(client_auc_roc, list) and i < len(client_auc_roc):
+            try:
+                val = float(client_auc_roc[i])
+                if not np.isnan(val):
+                    label += f' (AUC={val:.3f})'
+            except (TypeError, ValueError):
+                pass
+        ax_roc.plot(np.array(curve_data['fpr']), np.array(curve_data['tpr']), color=cmap(i), lw=1.8, label=label)
+
+    ax_roc.set_title('ROC Curves per Client', fontsize=12, fontweight='bold')
+    ax_roc.set_xlabel('False Positive Rate', fontsize=11)
+    ax_roc.set_ylabel('True Positive Rate', fontsize=11)
+    ax_roc.set_xlim([0.0, 1.0])
+    ax_roc.set_ylim([0.0, 1.05])
+    ax_roc.grid(True, alpha=0.3)
+    ax_roc.legend(fontsize=8, loc='lower right', ncol=2 if n_clients > 12 else 1)
+
+    # PR panel
+    ax_pr = axes[1]
+    for i, (client_name, curve_data) in enumerate(pr_items):
+        if not isinstance(curve_data, dict) or 'precision' not in curve_data or 'recall' not in curve_data:
+            continue
+        label = client_name
+        if isinstance(client_auc_pr, list) and i < len(client_auc_pr):
+            try:
+                val = float(client_auc_pr[i])
+                if not np.isnan(val):
+                    label += f' (AUC={val:.3f})'
+            except (TypeError, ValueError):
+                pass
+        ax_pr.plot(np.array(curve_data['recall']), np.array(curve_data['precision']), color=cmap(i), lw=1.8, label=label)
+
+    ax_pr.set_title('PR Curves per Client', fontsize=12, fontweight='bold')
+    ax_pr.set_xlabel('Recall', fontsize=11)
+    ax_pr.set_ylabel('Precision', fontsize=11)
+    ax_pr.set_xlim([0.0, 1.0])
+    ax_pr.set_ylim([0.0, 1.05])
+    ax_pr.grid(True, alpha=0.3)
+    ax_pr.legend(fontsize=8, loc='best', ncol=2 if n_clients > 12 else 1)
+
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Client-wise ROC/PR curves saved to {save_path}")
+    plt.show()
+
+
 def plot_roc_and_pr_curves(file_name, round_num=-1, save_path=None):
     """
     Plot ROC, PR curves, and Confusion Matrix.
@@ -776,6 +1210,13 @@ def plot_roc_and_pr_curves(file_name, round_num=-1, save_path=None):
         summary_text += f"  Kappa: {metrics_dict['cohen_kappa']:.4f}\n"
     if 'matthews_cc' in metrics_dict:
         summary_text += f"  MCC: {metrics_dict['matthews_cc']:.4f}\n"
+    if 'brier_score' in metrics_dict:
+        try:
+            bs = float(metrics_dict['brier_score'])
+            if not np.isnan(bs):
+                summary_text += f"  Brier Score: {bs:.4f}\n"
+        except (TypeError, ValueError):
+            pass
     
     ax4.text(0.05, 0.95, summary_text, transform=ax4.transAxes, fontsize=10,
             verticalalignment='top', fontfamily='monospace',
@@ -1033,6 +1474,7 @@ def extract_all_metrics_csv(file_name, output_csv=None):
             'mcc': metrics_dict.get('matthews_cc', np.nan),
             'auc_roc': metrics_dict.get('auc_roc', np.nan),
             'auc_pr': metrics_dict.get('auc_pr', np.nan),
+            'brier_score': metrics_dict.get('brier_score', np.nan),
         }
         
         # Class-wise metrics from confusion matrix
