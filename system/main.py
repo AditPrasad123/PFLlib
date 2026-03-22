@@ -57,6 +57,7 @@ from flcore.trainmodel.resnet import *
 from flcore.trainmodel.alexnet import *
 from flcore.trainmodel.mobilenet_v2 import *
 from flcore.trainmodel.transformer import *
+from efficientnet_b0_kernel import EfficientNetB0KernelFedBABU
 from quanv_efficientnet_b0 import QuanvEfficientNetB0, QuanvEfficientNetB0Improved, QuanvEfficientNetB0Advanced
 from quanv_tinyvit import QuanvTinyViT, QuanvTinyViTImproved, QuanvTinyViTAdvanced
 from utils.result_utils import average_data
@@ -182,6 +183,14 @@ def run(args):
             model.fc = nn.Linear(in_features, args.num_classes)
 
             args.model = model.to(args.device)
+
+        elif model_str == "EfficientNetB0Kernel":
+            args.model = EfficientNetB0KernelFedBABU(
+                num_classes=args.num_classes,
+                pretrained=True,
+                projection_dim=args.projection_dim,
+                embedding_dim=args.embedding_dim,
+            ).to(args.device)
 
         elif model_str == "TinyViT":
             # Load the Tiny-ViT model hosted on Hugging Face via timm
@@ -368,7 +377,7 @@ def run(args):
 
         elif args.algorithm == "FedBABU":
             # Skip BaseHeadSplit wrapping for models that already have internal base/head split
-            if model_str not in ["QuanvTinyViT", "QuanvEfficientNetB0"]:
+            if model_str not in ["QuanvTinyViT", "QuanvEfficientNetB0", "EfficientNetB0Kernel"]:
                 args.head = copy.deepcopy(args.model.fc)
                 args.model.fc = nn.Identity()
                 args.model = BaseHeadSplit(args.model, args.head)
@@ -602,6 +611,24 @@ if __name__ == "__main__":
     # freeze pretrained backbone and train only the head
     parser.add_argument('-fb', "--freeze_backbone", type=bool, default=False,
                         help="Freeze pretrained backbone weights and train only the head")
+    # kernel head options (Option 1: EfficientNetB0 + FedBABU + kernel classifier)
+    parser.add_argument('--projection_dim', type=int, default=128,
+                        help='Projection dimension before compact embedding layer.')
+    parser.add_argument('--embedding_dim', type=int, default=8,
+                        help='Compact embedding dimension used by classical/quantum kernel heads.')
+    parser.add_argument('--use_kernel_classifier', type=bool, default=False,
+                        help='Enable post-training local kernel classifier on frozen embeddings.')
+    parser.add_argument('--kernel_classifier_type', type=str, default='quantum_kernel_svm',
+                        choices=['svm_rbf', 'quantum_kernel_svm'],
+                        help='Type of local kernel classifier when use_kernel_classifier=True.')
+    parser.add_argument('--kernel_max_train_samples', type=int, default=600,
+                        help='Cap per-client samples used to fit kernel classifier to control O(N^2) cost.')
+    parser.add_argument('--kernel_gamma', type=float, default=0.5,
+                        help='Gamma for classical RBF SVM kernel.')
+    parser.add_argument('--kernel_q_layers', type=int, default=2,
+                        help='Number of entangling layers in quantum feature map kernel.')
+    parser.add_argument('--kernel_q_shots', type=int, default=0,
+                        help='Shots for quantum kernel backend; 0 means analytic simulator.')
     # FedGen
     parser.add_argument('-nd', "--noise_dim", type=int, default=512)
     parser.add_argument('-glr', "--generator_learning_rate", type=float, default=0.005)
