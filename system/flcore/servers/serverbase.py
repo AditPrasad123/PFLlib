@@ -7,11 +7,13 @@ import time
 import random
 from utils.data_utils import read_client_data
 from utils.dlg import DLG
+from flcore.utils.metrics import FLMetricsTracker
 
 
 class Server(object):
     def __init__(self, args, times):
         # Set up the main attributes
+        self.rs_detailed_metrics = []
         self.args = args
         self.device = args.device
         self.dataset = args.dataset
@@ -47,6 +49,12 @@ class Server(object):
         self.rs_test_acc = []
         self.rs_test_auc = []
         self.rs_train_loss = []
+        
+        # Initialize FL metrics tracker
+        self.fl_metrics_tracker = FLMetricsTracker()
+        
+        
+        self._register_model_info()
 
         self.times = times
         self.eval_gap = args.eval_gap
@@ -62,6 +70,30 @@ class Server(object):
         self.new_clients = []
         self.eval_new_clients = False
         self.fine_tuning_epoch_new = args.fine_tuning_epoch_new
+
+    def _register_model_info(self):
+        head = None
+        for name in ("head", "fc", "classifier"):
+            if hasattr(self.global_model, name):
+                head = getattr(self.global_model, name)
+                break
+
+        if head is None:
+            return
+
+        n_qubits = getattr(head, "n_qubits", None)
+        n_layers = getattr(head, "n_layers", None)
+        if n_qubits is None and n_layers is None:
+            return
+
+        model_info = {}
+        if n_qubits is not None:
+            model_info["n_qubits"] = int(n_qubits)
+        if n_layers is not None:
+            model_info["n_layers"] = int(n_layers)
+            model_info["circuit_depth"] = int(n_layers)
+
+        self.fl_metrics_tracker.set_model_info(model_info)
 
     def set_clients(self, clientObj):
         for i, train_slow, send_slow in zip(range(self.num_clients), self.train_slow_clients, self.send_slow_clients):
@@ -166,6 +198,23 @@ class Server(object):
         model_path = os.path.join("models", self.dataset)
         model_path = os.path.join(model_path, self.algorithm + "_server" + ".pt")
         return os.path.exists(model_path)
+    
+    def calculate_communication_cost(self):
+        """
+        Calculate the communication cost for this round.
+        Communication = 2 * (model size from server to clients + model updates from clients to server)
+        Returns bytes transferred in this round.
+        """
+        # Calculate model size in bytes
+        total_params = sum(p.numel() for p in self.global_model.parameters())
+        # Assuming float32 (4 bytes per parameter)
+        model_size_bytes = total_params * 4
+        
+        # Communication: server sends to all selected clients + clients send updates to server
+        # 2 times: download model + upload updates
+        communication_cost = 2 * len(self.selected_clients) * model_size_bytes
+        
+        return communication_cost
         
     def save_results(self):
         algo = self.dataset + "_" + self.algorithm
@@ -179,9 +228,120 @@ class Server(object):
             print("File path: " + file_path)
 
             with h5py.File(file_path, 'w') as hf:
+                # Save basic metrics
                 hf.create_dataset('rs_test_acc', data=self.rs_test_acc)
                 hf.create_dataset('rs_test_auc', data=self.rs_test_auc)
                 hf.create_dataset('rs_train_loss', data=self.rs_train_loss)
+                
+                # Save detailed metrics if available
+                if len(self.rs_detailed_metrics) > 0:
+                    # Create a group for detailed metrics
+                    detailed_group = hf.create_group('detailed_metrics')
+                    
+                    for round_idx, metrics_dict in enumerate(self.rs_detailed_metrics):
+                        round_group = detailed_group.create_group(f'round_{round_idx}')
+                        
+                        for key, value in metrics_dict.items():
+                            try:
+                                if isinstance(value, (int, float)):
+                                    round_group.create_dataset(key, data=value)
+                                elif isinstance(value, str):
+                                    round_group.create_dataset(key, data=np.string_(value))
+                                elif isinstance(value, np.ndarray):
+                                    round_group.create_dataset(key, data=value)
+                                elif isinstance(value, dict):
+                                    # Save curve dictionaries with their components
+                                    if key in ['roc_curve', 'pr_curve']:
+                                        if value is not None:
+                                            curve_subgroup = round_group.create_group(key)
+                                            for curve_key, curve_value in value.items():
+                                                if isinstance(curve_value, np.ndarray):
+                                                    curve_subgroup.create_dataset(curve_key, data=curve_value)
+                                    elif key in ['roc_curves', 'pr_curves']:
+                                        # Skip list of curves for now (too complex)
+                                        continue
+                                    else:
+                                        # Try to save simple dicts
+                                        try:
+                                            round_group.create_dataset(key, data=str(value))
+                                        except Exception:
+                                            pass
+                                elif isinstance(value, (list, tuple)):
+                                    try:
+                                        round_group.create_dataset(key, data=np.array(value))
+                                    except Exception:
+                                        pass
+                            except Exception as e:
+                                print(f"Warning: Could not save {key}: {e}")
+                
+                # Save FL-specific metrics
+                fl_metrics = self.fl_metrics_tracker.get_all_fl_metrics()
+                if fl_metrics:
+                    fl_group = hf.create_group('fl_metrics')
+                    
+                    # Convergence metrics
+                    if 'convergence' in fl_metrics:
+                        conv_group = fl_group.create_group('convergence')
+                        for key, value in fl_metrics['convergence'].items():
+                            try:
+                                if isinstance(value, (int, float)):
+                                    conv_group.create_dataset(key, data=value)
+                                elif isinstance(value, str):
+                                    conv_group.create_dataset(key, data=np.string_(value))
+                                elif isinstance(value, list):
+                                    conv_group.create_dataset(key, data=np.array(value))
+                            except Exception:
+                                pass
+                    
+                    # Communication metrics
+                    if 'communication' in fl_metrics:
+                        comm_group = fl_group.create_group('communication')
+                        for key, value in fl_metrics['communication'].items():
+                            try:
+                                if isinstance(value, (int, float)):
+                                    comm_group.create_dataset(key, data=value)
+                                elif isinstance(value, str):
+                                    comm_group.create_dataset(key, data=np.string_(value))
+                                elif isinstance(value, list):
+                                    comm_group.create_dataset(key, data=np.array(value))
+                            except Exception:
+                                pass
+                    
+                    # Computation time metrics
+                    if 'computation' in fl_metrics:
+                        comp_group = fl_group.create_group('computation')
+                        for key, value in fl_metrics['computation'].items():
+                            try:
+                                if isinstance(value, (int, float)):
+                                    comp_group.create_dataset(key, data=value)
+                                elif isinstance(value, str):
+                                    comp_group.create_dataset(key, data=np.string_(value))
+                                elif isinstance(value, list):
+                                    comp_group.create_dataset(key, data=np.array(value))
+                            except Exception:
+                                pass
+
+                    if 'personalization' in fl_metrics:
+                        pers_group = fl_group.create_group('personalization')
+                        for key, value in fl_metrics['personalization'].items():
+                            try:
+                                if isinstance(value, (int, float)):
+                                    pers_group.create_dataset(key, data=value)
+                                elif isinstance(value, str):
+                                    pers_group.create_dataset(key, data=np.string_(value))
+                            except Exception:
+                                pass
+
+                    if 'model' in fl_metrics:
+                        model_group = fl_group.create_group('model')
+                        for key, value in fl_metrics['model'].items():
+                            try:
+                                if isinstance(value, (int, float)):
+                                    model_group.create_dataset(key, data=value)
+                                elif isinstance(value, str):
+                                    model_group.create_dataset(key, data=np.string_(value))
+                            except Exception:
+                                pass
 
     def save_item(self, item, item_name):
         if not os.path.exists(self.save_folder_name):
@@ -208,6 +368,98 @@ class Server(object):
         ids = [c.id for c in self.clients]
 
         return ids, num_samples, tot_correct, tot_auc
+
+    def test_metrics_detailed(self):
+        """
+        Collect detailed metrics from all clients and aggregate them.
+        
+        Returns:
+            dict: Aggregated metrics across all clients
+        """
+        all_detailed_metrics = []
+        total_samples = 0
+        
+        for c in self.clients:
+            try:
+                metrics_dict = c.test_metrics_detailed()
+                all_detailed_metrics.append(metrics_dict)
+                total_samples += metrics_dict.get('test_samples', 0)
+            except Exception as e:
+                print(f"Error getting detailed metrics from client {c.id}: {e}")
+                continue
+        
+        if not all_detailed_metrics:
+            return {}
+        
+        # Aggregate metrics across clients
+        aggregated_metrics = {
+            'total_test_samples': total_samples,
+            'num_clients': len(all_detailed_metrics),
+            'accuracy': np.nanmean([m['accuracy'] for m in all_detailed_metrics if 'accuracy' in m]),
+            'f1_macro': np.nanmean([m['f1_macro'] for m in all_detailed_metrics if 'f1_macro' in m]),
+            'f1_micro': np.nanmean([m['f1_micro'] for m in all_detailed_metrics if 'f1_micro' in m]),
+            'f1_weighted': np.nanmean([m['f1_weighted'] for m in all_detailed_metrics if 'f1_weighted' in m]),
+            'precision_macro': np.nanmean([m['precision_macro'] for m in all_detailed_metrics if 'precision_macro' in m]),
+            'precision_micro': np.nanmean([m['precision_micro'] for m in all_detailed_metrics if 'precision_micro' in m]),
+            'precision_weighted': np.nanmean([m['precision_weighted'] for m in all_detailed_metrics if 'precision_weighted' in m]),
+            'recall_macro': np.nanmean([m['recall_macro'] for m in all_detailed_metrics if 'recall_macro' in m]),
+            'recall_micro': np.nanmean([m['recall_micro'] for m in all_detailed_metrics if 'recall_micro' in m]),
+            'recall_weighted': np.nanmean([m['recall_weighted'] for m in all_detailed_metrics if 'recall_weighted' in m]),
+            'sensitivity_macro': np.nanmean([m.get('sensitivity_macro', np.nan) for m in all_detailed_metrics if 'sensitivity_macro' in m]),
+            'sensitivity_weighted': np.nanmean([m.get('sensitivity_weighted', np.nan) for m in all_detailed_metrics if 'sensitivity_weighted' in m]),
+            'specificity_macro': np.nanmean([m.get('specificity_macro', np.nan) for m in all_detailed_metrics if 'specificity_macro' in m]),
+            'specificity_weighted': np.nanmean([m.get('specificity_weighted', np.nan) for m in all_detailed_metrics if 'specificity_weighted' in m]),
+            'cohen_kappa': np.nanmean([m['cohen_kappa'] for m in all_detailed_metrics if 'cohen_kappa' in m]),
+            'matthews_cc': np.nanmean([m['matthews_cc'] for m in all_detailed_metrics if 'matthews_cc' in m]),
+            'auc_roc': np.nanmean([m.get('auc_roc', np.nan) for m in all_detailed_metrics if 'auc_roc' in m]),
+            'auc_pr': np.nanmean([m.get('auc_pr', np.nan) for m in all_detailed_metrics if 'auc_pr' in m]),
+        }
+
+        client_accuracies = [m['accuracy'] for m in all_detailed_metrics if 'accuracy' in m]
+        if client_accuracies:
+            aggregated_metrics['client_accuracy_by_client'] = client_accuracies
+            aggregated_metrics['client_accuracy_mean'] = float(np.nanmean(client_accuracies))
+            aggregated_metrics['client_accuracy_variance'] = float(np.nanvar(client_accuracies))
+        
+        # Add per-class metrics if available
+        if any('confusion_matrix' in m for m in all_detailed_metrics):
+            try:
+                # Aggregate confusion matrices
+                cm_total = np.zeros((self.num_classes, self.num_classes))
+                for m in all_detailed_metrics:
+                    if 'confusion_matrix' in m:
+                        cm_total += m['confusion_matrix']
+                aggregated_metrics['confusion_matrix'] = cm_total
+            except Exception:
+                pass
+        
+        # Add ROC and PR curves if available
+        # Store both individual curves and a representative curve (first valid one)
+        if any('roc_curve' in m for m in all_detailed_metrics):
+            try:
+                roc_curves = [m['roc_curve'] for m in all_detailed_metrics if m.get('roc_curve') is not None]
+                if roc_curves:
+                    # Store the list of all curves
+                    aggregated_metrics['roc_curves'] = roc_curves
+                    # Also store the first valid curve for direct plotting
+                    if isinstance(roc_curves[0], dict) and 'fpr' in roc_curves[0]:
+                        aggregated_metrics['roc_curve'] = roc_curves[0]
+            except Exception:
+                pass
+        
+        if any('pr_curve' in m for m in all_detailed_metrics):
+            try:
+                pr_curves = [m['pr_curve'] for m in all_detailed_metrics if m.get('pr_curve') is not None]
+                if pr_curves:
+                    # Store the list of all curves
+                    aggregated_metrics['pr_curves'] = pr_curves
+                    # Also store the first valid curve for direct plotting
+                    if isinstance(pr_curves[0], dict) and 'precision' in pr_curves[0]:
+                        aggregated_metrics['pr_curve'] = pr_curves[0]
+            except Exception:
+                pass
+        
+        return aggregated_metrics
 
     def train_metrics(self):
         if self.eval_new_clients and self.num_new_clients > 0:
@@ -245,12 +497,10 @@ class Server(object):
         else:
             loss.append(train_loss)
 
-        print("Averaged Train Loss: {:.4f}".format(train_loss))
-        print("Averaged Test Accuracy: {:.4f}".format(test_acc))
-        print("Averaged Test AUC: {:.4f}".format(test_auc))
-        # self.print_(test_acc, train_acc, train_loss)
-        print("Std Test Accuracy: {:.4f}".format(np.std(accs)))
-        print("Std Test AUC: {:.4f}".format(np.std(aucs)))
+        self.rs_test_auc.append(test_auc)
+        print(f"Loss: {train_loss:.4f} | Acc: {test_acc:.4f} | AUC: {test_auc:.4f}")
+        
+        
 
     def print_(self, test_acc, test_auc, train_loss):
         print("Average Test Accuracy: {:.4f}".format(test_acc))
@@ -359,11 +609,27 @@ class Server(object):
         num_samples = []
         tot_correct = []
         tot_auc = []
+        accs = []
+        f1s = []
+        aucs = []
+        recalls = []
         for c in self.new_clients:
-            ct, ns, auc = c.test_metrics()
-            tot_correct.append(ct*1.0)
-            tot_auc.append(auc*ns)
-            num_samples.append(ns)
+            #ct, ns, auc = c.test_metrics()
+            acc, f1, auc, recall = c.test_metrics()
+            accs.append(acc)
+            f1s.append(f1)
+            aucs.append(auc)
+            recalls.append(recall)
+            # tot_correct.append(ct*1.0)
+            # tot_auc.append(auc)
+            # num_samples.append(ns)
+            print(f"Mean Accuracy: {np.mean(accs):.4f}")
+            print(f"Mean Macro-F1: {np.mean(f1s):.4f}")
+            print(f"Mean AUC: {np.mean(aucs):.4f}")
+
+            mean_recall = np.mean(np.stack(recalls), axis=0)
+            print("Per-class Recall:", mean_recall)
+
 
         ids = [c.id for c in self.new_clients]
 

@@ -3,7 +3,8 @@ import random
 from flcore.clients.clientbabu import clientBABU
 from flcore.servers.serverbase import Server
 from threading import Thread
-
+import numpy as np
+import torch
 
 class FedBABU(Server):
     def __init__(self, args, times):
@@ -27,10 +28,10 @@ class FedBABU(Server):
             self.send_models()
 
             if i%self.eval_gap == 0:
-                print(f"\n-------------Round number: {i}-------------")
-                print("\nEvaluate global model")
+                print(f"\n---Round number: {i}---")
+                print("Evaluate global model")
                 self.evaluate()
-
+            print("Client done.")
             for client in self.selected_clients:
                 client.train()
 
@@ -44,24 +45,37 @@ class FedBABU(Server):
                 self.call_dlg(i)
             self.aggregate_parameters()
 
-            self.Budget.append(time.time() - s_t)
-            print('-'*25, 'time cost', '-'*25, self.Budget[-1])
-
+            
             if self.auto_break and self.check_done(acc_lss=[self.rs_test_acc], top_cnt=self.top_cnt):
                 break
+            print("Round done.")
 
-        print("\nBest accuracy.")
-        # self.print_(max(self.rs_test_acc), max(
-        #     self.rs_train_acc), min(self.rs_train_loss))
-        print(max(self.rs_test_acc))
+        print("\nFinal Results:")
+        print(f"Best Accuracy: {max(self.rs_test_acc):.4f}")
+        print(f"Final Accuracy: {self.rs_test_acc[-1]:.4f}")
         print("\nAverage time cost per round.")
         print(sum(self.Budget[1:])/len(self.Budget[1:]))
-
+        
         for client in self.clients:
             client.fine_tune()
-        print("\n-------------Evaluate fine-tuned personalized models-------------")
+        
+        torch.save(self.clients, "clients_finetune.pt")
+        print("Saved clients after fine-tuning.")
+        for client in self.clients:
+            print(f"Client {client.id} head weights sum:",
+            sum(p.sum().item() for p in client.model.head.parameters()))
+
+        print("\nFinal Personalized Results (FedBABU) [Baseline]:")
         self.evaluate()
 
+        # 🔥 ADD THIS (TTFT)
+        for client in self.clients:
+            client.test_time_finetune()
+        torch.save(self.clients, "clients_ttft.pt")
+        print("Saved clients after TTFT.")
+        print("\nFinal Personalized Results (FedBABU + TTFT):")
+        self.evaluate()
+  
         self.save_results()
         self.save_global_model()
 

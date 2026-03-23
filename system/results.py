@@ -1,0 +1,5 @@
+from utils.result_utils import plot_roc_and_pr_curves
+plot_roc_and_pr_curves('ISIC2019_quanv_FedBABU_test_0')
+
+from utils.result_utils import print_detailed_metrics_summary
+print_detailed_metrics_summary('ISIC2019_quanv_FedBABU_test_0')

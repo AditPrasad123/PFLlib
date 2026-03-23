@@ -6,7 +6,9 @@ import os
 from torch.utils.data import DataLoader, WeightedRandomSampler, Subset
 from sklearn.preprocessing import label_binarize
 from sklearn import metrics
+from sklearn.metrics import roc_auc_score
 from utils.data_utils import read_client_data
+from flcore.utils.metrics import MetricsCalculator
 
 
 class Client(object):
@@ -65,7 +67,7 @@ class Client(object):
                 if labels_array is not None and labels_array.size > 0:
                     counts = np.bincount(labels_array, minlength=self.num_classes)
                     counts = np.where(counts == 0, 1, counts)
-                    weights = (labels_array.size) / (self.num_classes * counts)
+                    weights = np.sqrt((labels_array.size) / (self.num_classes * counts))
                     class_weights_tensor = torch.tensor(weights, dtype=torch.float32, device=self.device)
             except Exception:
                 class_weights_tensor = None
@@ -82,7 +84,7 @@ class Client(object):
                 self.loss = nn.CrossEntropyLoss(weight=class_weights_tensor)
         # Only include parameters that require gradients (useful when backbone is frozen)
         trainable_params = filter(lambda p: p.requires_grad, self.model.parameters())
-        self.optimizer = torch.optim.SGD(trainable_params, lr=self.learning_rate)
+        self.optimizer = torch.optim.SGD(trainable_params, lr=self.learning_rate, momentum=args.momentum)
         self.learning_rate_scheduler = torch.optim.lr_scheduler.ExponentialLR(
             optimizer=self.optimizer, 
             gamma=args.learning_rate_decay_gamma
@@ -134,6 +136,12 @@ class Client(object):
             param.data = new_param.data.clone()
 
     def test_metrics(self):
+        """
+        Compute basic test metrics: accuracy and AUC-ROC.
+        
+        Returns:
+            tuple: (test_acc, test_num, auc)
+        """
         testloaderfull = self.load_test_data()
         self.model.eval()
 
@@ -149,26 +157,100 @@ class Client(object):
                 else:
                     x = x.to(self.device)
                 y = y.to(self.device)
-                output = self.model(x)
+                
+                # Get logits from model
+                logits = self.model(x)
 
-                test_acc += (torch.sum(torch.argmax(output, dim=1) == y)).item()
+                # Compute predictions
+                test_acc += (torch.sum(torch.argmax(logits, dim=1) == y)).item()
                 test_num += y.shape[0]
 
-                y_prob.append(output.detach().cpu().numpy())
-                nc = self.num_classes
-                if self.num_classes == 2:
-                    nc += 1
-                lb = label_binarize(y.detach().cpu().numpy(), classes=np.arange(nc))
-                if self.num_classes == 2:
-                    lb = lb[:, :2]
-                y_true.append(lb)
+                # Convert logits to softmax probabilities (IMPORTANT!)
+                probs = torch.softmax(logits, dim=1)
+                y_prob.append(probs.detach().cpu().numpy())
+                
+                # Store true labels
+                y_true.append(y.detach().cpu().numpy())
 
-        y_prob = np.concatenate(y_prob, axis=0)
-        y_true = np.concatenate(y_true, axis=0)
+        # Concatenate arrays
+        y_prob = np.concatenate(y_prob, axis=0)  # Shape: (N, C) softmax probs
+        y_true = np.concatenate(y_true, axis=0)  # Shape: (N,) class indices
 
-        auc = metrics.roc_auc_score(y_true, y_prob, average='micro')
+        # Compute AUC-ROC
+        auc = self._compute_auc_roc(y_true, y_prob)
         
         return test_acc, test_num, auc
+    
+    def _compute_auc_roc(self, y_true, y_prob):
+        """
+        Compute multiclass AUC-ROC.
+        
+        Args:
+            y_true: True labels (0 to C-1)
+            y_prob: Softmax probabilities (N, C)
+            
+        Returns:
+            float: AUC-ROC score (macro average)
+        """
+        try:
+            # Ensure inputs are valid
+            assert y_prob.shape[0] == len(y_true), "Shape mismatch"
+            assert y_prob.shape[1] == self.num_classes, "Class mismatch"
+            
+            unique_classes_true = np.unique(y_true)
+            unique_classes_pred = np.unique(np.argmax(y_prob, axis=1))
+            
+            # Need at least 2 classes for AUC
+            if len(unique_classes_true) < 2:
+                #print("[DEBUG] Warning: Only one class in ground truth, cannot compute AUC")
+                return 0.0
+            
+            # For binary classification
+            if self.num_classes == 2:
+                # Use the probability of class 1
+                y_prob_pos = y_prob[:, 1]
+                auc = roc_auc_score(y_true, y_prob_pos)
+                return float(auc) if not (np.isnan(auc) or np.isinf(auc)) else 0.0
+            
+            # For multiclass: one-vs-rest, but only for classes present in ground truth
+            # This avoids NaN when some classes are missing
+            try:
+                # Use weighted macro (handles imbalanced classes)
+                y_true_bin = label_binarize(y_true, classes=np.arange(self.num_classes))
+                auc = roc_auc_score(y_true_bin, y_prob, average='weighted', multi_class='ovr')
+                
+                if np.isnan(auc) or np.isinf(auc):
+                    #print(f"[DEBUG] Warning: AUC returned NaN, trying fallback...")
+                    # Fallback: compute only for classes present in y_true
+                    valid_classes = unique_classes_true
+                    if len(valid_classes) >= 2:
+                        auc_scores = []
+                        for class_idx in valid_classes:
+                            try:
+                                y_binary = (y_true == class_idx).astype(int)
+                                if np.sum(y_binary) > 0 and np.sum(1 - y_binary) > 0:
+                                    auc_class = roc_auc_score(y_binary, y_prob[:, class_idx])
+                                    if not (np.isnan(auc_class) or np.isinf(auc_class)):
+                                        auc_scores.append(auc_class)
+                            except Exception:
+                                continue
+                        
+                        if auc_scores:
+                            auc = np.mean(auc_scores)
+                        else:
+                            auc = 0.0
+                    else:
+                        auc = 0.0
+                
+                return float(auc) if not (np.isnan(auc) or np.isinf(auc)) else 0.0
+                
+            except Exception as e:
+                #print(f"[DEBUG] Error in AUC computation: {e}")
+                return 0.0
+            
+        except Exception as e:
+            #print(f"[DEBUG] Error computing AUC: {e}")
+            return 0.0
 
     def train_metrics(self):
         trainloader = self.load_train_data()
@@ -225,3 +307,4 @@ class FocalLoss(nn.Module):
     # @staticmethod
     # def model_exists():
     #     return os.path.exists(os.path.join("models", "server" + ".pt"))
+    

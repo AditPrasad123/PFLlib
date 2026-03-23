@@ -35,6 +35,10 @@ class clientAVG(Client):
                 loss.backward()
                 self.optimizer.step()
 
+        if epoch == 0 and i == 0:
+                    print(f"[Client {self.id}] batch x:", x.shape, "y:", y.shape)
+                    print(f"[Client {self.id}] output:", output.shape)
+        
         # self.model.cpu()
 
         if self.learning_rate_decay:

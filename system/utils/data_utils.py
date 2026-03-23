@@ -2,7 +2,7 @@ import numpy as np
 import os
 import torch
 from collections import defaultdict
-
+import importlib.util
 
 def read_data(dataset, idx, is_train=True):
     if is_train:
@@ -17,53 +17,27 @@ def read_data(dataset, idx, is_train=True):
 
 
 def read_client_data(dataset, idx, is_train=True, few_shot=0):
+    dataset_path = os.path.join(os.path.dirname(__file__), '..', '..', 'dataset')
     if dataset == 'ISIC2019':
-        # Use the custom dataset class for on-the-fly augmentations
-        import sys
-        import importlib.util
-        
-        dataset_path = os.path.join(os.path.dirname(__file__), '..', '..', 'dataset')
+        # Load ISIC2019Dataset dynamically
         module_path = os.path.join(dataset_path, 'isic2019_dataset.py')
-        
-        # Load the module dynamically
         spec = importlib.util.spec_from_file_location("isic2019_dataset", module_path)
         isic_module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(isic_module)
-        ISIC2019Dataset = isic_module.ISIC2019Dataset
-        
-        data = ISIC2019Dataset(client_id=idx, train=is_train, data_path=dataset_path)
-        if is_train and few_shot > 0:
-            # For few-shot, limit the dataset size
-            from torch.utils.data import Subset
-            indices = []
-            class_counts = defaultdict(int)
-            for i in range(len(data)):
-                label = data.labels[i]  # Access labels directly without loading image
-                if class_counts[label] < few_shot:
-                    indices.append(i)
-                    class_counts[label] += 1
-            data = Subset(data, indices)
-        return data
+        DatasetClass = isic_module.ISIC2019Dataset
+        return DatasetClass(client_id=idx, train=is_train, data_path=dataset_path)
+    
+    elif dataset == 'ISIC2019_quanv':
+        # Load ISIC2019QuanvDataset dynamically
+        module_path = os.path.join(dataset_path, 'isic2019_quanv_dataset.py')
+        spec = importlib.util.spec_from_file_location("isic2019_quanv_dataset", module_path)
+        quanv_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(quanv_module)
+        DatasetClass = quanv_module.ISIC2019QuanvDataset
+        return DatasetClass(client_id=idx, train=is_train, data_path=dataset_path)
+    
     else:
-        # Original implementation for other datasets
-        data = read_data(dataset, idx, is_train)
-        if "News" in dataset:
-            data_list = process_text(data)
-        elif "Shakespeare" in dataset:
-            data_list = process_Shakespeare(data)
-        else:
-            data_list = process_image(data, dataset)
-
-        if is_train and few_shot > 0:
-            shot_cnt_dict = defaultdict(int)
-            data_list_new = []
-            for data_item in data_list:
-                label = data_item[1].item()
-                if shot_cnt_dict[label] < few_shot:
-                    data_list_new.append(data_item)
-                    shot_cnt_dict[label] += 1
-            data_list = data_list_new
-        return data_list
+        raise ValueError(f"Unknown dataset: {dataset}")
 
 def process_image(data, dataset=None):
     X = torch.Tensor(data['x']).type(torch.float32)

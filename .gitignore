@@ -1,5 +1,9 @@
-/results
+/results/
 /system/models
 *__pycache__*
 /dataset/ISIC2019
+/dataset/ISIC2019_quanv
 /system/centralized_train.py
+/system/notes.md
+*.pt
+*.pth
