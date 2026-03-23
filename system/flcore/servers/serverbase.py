@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 import os
 import numpy as np
 import h5py
@@ -217,7 +218,9 @@ class Server(object):
         return communication_cost
         
     def save_results(self):
-        algo = self.dataset + "_" + self.algorithm
+        # Get model name if available
+        model_name = getattr(self.args, 'model_name', 'unknown_model')
+        algo = self.dataset + "_" + self.algorithm + "_" + model_name
         result_path = "../results/"
         if not os.path.exists(result_path):
             os.makedirs(result_path)

@@ -79,6 +79,15 @@ def run(args):
         print("Creating server and clients ...")
         start = time.time()
 
+        
+        if "_quanv" in args.dataset:
+            if model_str == "EfficientNetB0":
+                print(f"⚠️  Auto-switching from EfficientNetB0 to QuanvEfficientNetB0 for {args.dataset} dataset")
+                model_str = "QuanvEfficientNetB0"
+            elif model_str == "TinyViT":
+                print(f"⚠️  Auto-switching from TinyViT to QuanvTinyViT for {args.dataset} dataset")
+                model_str = "QuanvTinyViT"
+        
         # Generate args.model
         if model_str == "MLR": # convex
             if "MNIST" in args.dataset:
@@ -258,6 +267,9 @@ def run(args):
             raise NotImplementedError
 
         print(args.model)
+        
+        # Store model name string for result file naming
+        args.model_name = model_str
 
         # Optionally freeze backbone weights and train only the classification head
         if getattr(args, 'freeze_backbone', False):
@@ -480,7 +492,8 @@ def run(args):
     
 
     # Global average
-    average_data(dataset=args.dataset, algorithm=args.algorithm, goal=args.goal, times=args.times)
+    model_name = getattr(args, 'model_name', '')
+    average_data(dataset=args.dataset, algorithm=args.algorithm, goal=args.goal, times=args.times, model=model_name, prev=args.prev)
 
     print("All done!")
 
@@ -591,6 +604,24 @@ if __name__ == "__main__":
     # freeze pretrained backbone and train only the head
     parser.add_argument('-fb', "--freeze_backbone", type=bool, default=False,
                         help="Freeze pretrained backbone weights and train only the head")
+    # kernel head options (Option 1: EfficientNetB0 + FedBABU + kernel classifier)
+    parser.add_argument('--projection_dim', type=int, default=128,
+                        help='Projection dimension before compact embedding layer.')
+    parser.add_argument('--embedding_dim', type=int, default=8,
+                        help='Compact embedding dimension used by classical/quantum kernel heads.')
+    parser.add_argument('--use_kernel_classifier', type=bool, default=False,
+                        help='Enable post-training local kernel classifier on frozen embeddings.')
+    parser.add_argument('--kernel_classifier_type', type=str, default='quantum_kernel_svm',
+                        choices=['svm_rbf', 'quantum_kernel_svm'],
+                        help='Type of local kernel classifier when use_kernel_classifier=True.')
+    parser.add_argument('--kernel_max_train_samples', type=int, default=600,
+                        help='Cap per-client samples used to fit kernel classifier to control O(N^2) cost.')
+    parser.add_argument('--kernel_gamma', type=float, default=0.5,
+                        help='Gamma for classical RBF SVM kernel.')
+    parser.add_argument('--kernel_q_layers', type=int, default=2,
+                        help='Number of entangling layers in quantum feature map kernel.')
+    parser.add_argument('--kernel_q_shots', type=int, default=0,
+                        help='Shots for quantum kernel backend; 0 means analytic simulator.')
     # FedGen
     parser.add_argument('-nd', "--noise_dim", type=int, default=512)
     parser.add_argument('-glr', "--generator_learning_rate", type=float, default=0.005)

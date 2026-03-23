@@ -5,6 +5,13 @@ import time
 import torch
 import torch.nn.functional as F
 from flcore.clients.clientbase import Client
+from flcore.utils.metrics import MetricsCalculator
+
+
+def _softmax_np(logits):
+    logits = logits - np.max(logits, axis=1, keepdims=True)
+    exp = np.exp(logits)
+    return exp / np.sum(exp, axis=1, keepdims=True)
 
 
 class clientBABU(Client):
