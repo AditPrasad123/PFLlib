@@ -77,8 +77,6 @@ class MetricsCalculator:
         
         # 1. Accuracy
         metrics_dict['accuracy'] = accuracy_score(y_true, y_pred)
-        # In single-label multiclass, micro accuracy equals overall accuracy.
-        metrics_dict['accuracy_micro'] = metrics_dict['accuracy']
         # print(f"[DEBUG] Accuracy: {metrics_dict['accuracy']:.4f}")
         
         # 2. Precision (macro, micro, weighted)
@@ -110,8 +108,6 @@ class MetricsCalculator:
         metrics_dict['recall_weighted'] = recall_score(
             y_true, y_pred, average='weighted', zero_division=0
         )
-        # Balanced accuracy for multiclass corresponds to macro recall.
-        metrics_dict['accuracy_macro'] = metrics_dict['recall_macro']
         # print(f"[DEBUG] Recall - macro: {metrics_dict['recall_macro']:.4f}, weighted: {metrics_dict['recall_weighted']:.4f}")
         
         # Per-class recall
@@ -168,23 +164,7 @@ class MetricsCalculator:
 
         # Sensitivity is recall (alias for clarity)
         metrics_dict['sensitivity_macro'] = metrics_dict['recall_macro']
-        metrics_dict['sensitivity_micro'] = metrics_dict['recall_micro']
         metrics_dict['sensitivity_weighted'] = metrics_dict['recall_weighted']
-        
-        # 5c. Specificity - Micro average
-        # Micro specificity: Overall TN / (Overall TN + Overall FP)
-        total_tn = 0
-        total_fp = 0
-        for i in range(self.num_classes):
-            tp = cm[i, i]
-            fn = np.sum(cm[i, :]) - tp
-            fp = np.sum(cm[:, i]) - tp
-            tn = total - tp - fn - fp
-            total_tn += tn
-            total_fp += fp
-        
-        specificity_micro_denom = total_tn + total_fp
-        metrics_dict['specificity_micro'] = float(total_tn / specificity_micro_denom) if specificity_micro_denom > 0 else 0.0
         
         # 6. Kappa Score
         metrics_dict['cohen_kappa'] = cohen_kappa_score(y_true, y_pred)
@@ -228,37 +208,12 @@ class MetricsCalculator:
             metrics_dict['pr_curve'] = self._compute_pr_curve(
                 y_true, y_prob, self.num_classes
             )
-
-            # ===== Class-wise ROC/PR curves (one-vs-rest for each class) =====
-            class_roc_curves, class_auc_roc_by_class = self._compute_classwise_roc_curves(
-                y_true, y_prob, self.num_classes
-            )
-            class_pr_curves, class_auc_pr_by_class = self._compute_classwise_pr_curves(
-                y_true, y_prob, self.num_classes
-            )
-            metrics_dict['class_roc_curves'] = class_roc_curves
-            metrics_dict['class_pr_curves'] = class_pr_curves
-            metrics_dict['class_auc_roc_by_class'] = class_auc_roc_by_class
-            metrics_dict['class_auc_pr_by_class'] = class_auc_pr_by_class
         else:
             metrics_dict['auc_roc'] = 0.0
             metrics_dict['auc_pr'] = 0.0
             metrics_dict['roc_curve'] = None
             metrics_dict['pr_curve'] = None
-            metrics_dict['class_roc_curves'] = {}
-            metrics_dict['class_pr_curves'] = {}
-            metrics_dict['class_auc_roc_by_class'] = []
-            metrics_dict['class_auc_pr_by_class'] = []
         
-        # 8. Brier Score (multiclass)
-        if y_prob is not None:
-            y_bin = label_binarize(y_true, classes=np.arange(self.num_classes)).astype(np.float64)
-            metrics_dict['brier_score'] = float(
-                np.mean(np.sum((y_prob.astype(np.float64) - y_bin) ** 2, axis=1))
-            )
-        else:
-            metrics_dict['brier_score'] = np.nan
-
         self.metrics_dict = metrics_dict
         return metrics_dict
     
@@ -428,50 +383,6 @@ class MetricsCalculator:
         except Exception as e:
             print(f"[DEBUG] Error computing PR curve: {e}")
             return None
-
-    def _compute_classwise_roc_curves(self, y_true, y_prob, num_classes):
-        """Compute one-vs-rest ROC curves and AUC for each class."""
-        curves = {}
-        aucs = []
-        for class_idx in range(num_classes):
-            y_binary = (y_true == class_idx).astype(int)
-            try:
-                # Need both positive and negative samples to define ROC.
-                if np.sum(y_binary) == 0 or np.sum(1 - y_binary) == 0:
-                    aucs.append(np.nan)
-                    continue
-                fpr, tpr, _ = roc_curve(y_binary, y_prob[:, class_idx])
-                curves[f'class_{class_idx}'] = {
-                    'fpr': np.array(fpr, dtype=np.float32),
-                    'tpr': np.array(tpr, dtype=np.float32),
-                }
-                auc_val = roc_auc_score(y_binary, y_prob[:, class_idx])
-                aucs.append(float(auc_val) if not (np.isnan(auc_val) or np.isinf(auc_val)) else np.nan)
-            except Exception:
-                aucs.append(np.nan)
-        return curves, aucs
-
-    def _compute_classwise_pr_curves(self, y_true, y_prob, num_classes):
-        """Compute one-vs-rest PR curves and PR-AUC for each class."""
-        curves = {}
-        aucs = []
-        for class_idx in range(num_classes):
-            y_binary = (y_true == class_idx).astype(int)
-            try:
-                if np.sum(y_binary) == 0:
-                    aucs.append(np.nan)
-                    continue
-                precision_vals, recall_vals, _ = precision_recall_curve(y_binary, y_prob[:, class_idx])
-                curves[f'class_{class_idx}'] = {
-                    'precision': np.array(precision_vals, dtype=np.float32),
-                    'recall': np.array(recall_vals, dtype=np.float32),
-                }
-                from sklearn.metrics import auc as sk_auc
-                auc_val = sk_auc(recall_vals, precision_vals)
-                aucs.append(float(auc_val) if not (np.isnan(auc_val) or np.isinf(auc_val)) else np.nan)
-            except Exception:
-                aucs.append(np.nan)
-        return curves, aucs
 
 
 def auc_score(y_true, y_score):

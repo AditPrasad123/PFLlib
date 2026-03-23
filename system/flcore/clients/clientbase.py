@@ -252,74 +252,6 @@ class Client(object):
             #print(f"[DEBUG] Error computing AUC: {e}")
             return 0.0
 
-    def test_metrics_detailed(self):
-        """
-        Calculate detailed test metrics including F1, Precision, Recall, KappaScore, etc.
-        
-        Returns:
-            dict: Dictionary containing all classification metrics
-        """
-        testloaderfull = self.load_test_data()
-        self.model.eval()
-
-        test_acc = 0
-        test_num = 0
-        y_prob = []
-        y_true = []
-        y_pred = []
-        
-        with torch.no_grad():
-            for x, y in testloaderfull:
-                if type(x) == type([]):
-                    x[0] = x[0].to(self.device)
-                else:
-                    x = x.to(self.device)
-                y = y.to(self.device)
-                
-                # Get model output (logits)
-                logits = self.model(x)
-
-                # Compute predictions from logits
-                pred = torch.argmax(logits, dim=1)
-                test_acc += (torch.sum(pred == y)).item()
-                test_num += y.shape[0]
-                
-                # Store predicted labels
-                y_pred.append(pred.detach().cpu().numpy())
-
-                # Convert logits to softmax probabilities (IMPORTANT!)
-                probs = torch.softmax(logits, dim=1)
-                y_prob.append(probs.detach().cpu().numpy())
-                
-                # Store true labels
-                y_true.append(y.detach().cpu().numpy())
-
-        # Concatenate all batches
-        y_prob = np.concatenate(y_prob, axis=0)  # Shape: (N, C) with softmax probs
-        y_true = np.concatenate(y_true, axis=0)  # Shape: (N,) with class indices
-        y_pred = np.concatenate(y_pred, axis=0)  # Shape: (N,) with predicted class indices
-
-        # Validate before passing to metrics calculator
-        assert y_true.shape[0] == y_pred.shape[0] == y_prob.shape[0], \
-            f"Shape mismatch: {y_true.shape[0]} vs {y_pred.shape[0]} vs {y_prob.shape[0]}"
-        assert y_prob.shape[1] == self.num_classes, \
-            f"Probability shape mismatch: {y_prob.shape[1]} classes vs {self.num_classes} expected"
-        
-        # Verify softmax properties
-        prob_sums = np.sum(y_prob, axis=1)
-        assert np.allclose(prob_sums, 1.0, atol=1e-5), \
-            f"Probabilities don't sum to 1: min={np.min(prob_sums):.6f}, max={np.max(prob_sums):.6f}"
-
-        # Calculate all metrics using MetricsCalculator
-        calc = MetricsCalculator(num_classes=self.num_classes)
-        detailed_metrics = calc.calculate_classification_metrics(y_true, y_pred, y_prob)
-        
-        # Add basic counts
-        detailed_metrics['test_samples'] = test_num
-        detailed_metrics['test_correct'] = test_acc
-        
-        return detailed_metrics
-
     def train_metrics(self):
         trainloader = self.load_train_data()
         self.model.eval()
@@ -375,27 +307,4 @@ class FocalLoss(nn.Module):
     # @staticmethod
     # def model_exists():
     #     return os.path.exists(os.path.join("models", "server" + ".pt"))
-    def test_time_finetune(self):
-        self.model.train()
-
-        # Freeze everything except classifier
-        for p in self.model.parameters():
-            p.requires_grad = False
-        for p in self.model.head.parameters():
-            p.requires_grad = True
-
-        optimizer = torch.optim.SGD(
-            self.model.head.parameters(),
-            lr=1e-3,
-            momentum=0.9
-        )
-
-        loader = self.load_train_data(batch_size=8)
-
-        for _ in range(5):  # TTFT epochs
-            for x, y in loader:
-                x, y = x.to(self.device), y.to(self.device)
-                loss = self.loss(self.model(x), y)
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+    

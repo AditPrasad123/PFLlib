@@ -14,6 +14,7 @@ from flcore.utils.metrics import FLMetricsTracker
 class Server(object):
     def __init__(self, args, times):
         # Set up the main attributes
+        self.rs_detailed_metrics = []
         self.args = args
         self.device = args.device
         self.dataset = args.dataset
@@ -53,9 +54,7 @@ class Server(object):
         # Initialize FL metrics tracker
         self.fl_metrics_tracker = FLMetricsTracker()
         
-        # Detailed metrics storage
-        self.rs_detailed_metrics = []  # Store all detailed metrics per round
-
+        
         self._register_model_info()
 
         self.times = times
@@ -74,93 +73,28 @@ class Server(object):
         self.fine_tuning_epoch_new = args.fine_tuning_epoch_new
 
     def _register_model_info(self):
-        model_info = self._compute_model_complexity()
-
         head = None
         for name in ("head", "fc", "classifier"):
             if hasattr(self.global_model, name):
                 head = getattr(self.global_model, name)
                 break
 
-        if head is not None:
-            n_qubits = getattr(head, "n_qubits", None)
-            n_layers = getattr(head, "n_layers", None)
-            if n_qubits is not None:
-                model_info["n_qubits"] = int(n_qubits)
-            if n_layers is not None:
-                model_info["n_layers"] = int(n_layers)
-                model_info["circuit_depth"] = int(n_layers)
+        if head is None:
+            return
 
-        if model_info:
-            self.fl_metrics_tracker.set_model_info(model_info)
+        n_qubits = getattr(head, "n_qubits", None)
+        n_layers = getattr(head, "n_layers", None)
+        if n_qubits is None and n_layers is None:
+            return
 
-    def _compute_model_complexity(self):
-        """Compute total/trainable param counts and FLOPs via forward hooks (no external packages)."""
-        info = {}
-        try:
-            total = sum(p.numel() for p in self.global_model.parameters())
-            trainable = sum(p.numel() for p in self.global_model.parameters() if p.requires_grad)
-            info['total_params'] = total
-            info['trainable_params'] = trainable
-            info['non_trainable_params'] = total - trainable
-        except Exception:
-            pass
+        model_info = {}
+        if n_qubits is not None:
+            model_info["n_qubits"] = int(n_qubits)
+        if n_layers is not None:
+            model_info["n_layers"] = int(n_layers)
+            model_info["circuit_depth"] = int(n_layers)
 
-        try:
-            dataset_name = getattr(self, 'dataset', '')
-            if '_quanv' in dataset_name:
-                dummy_input = torch.zeros(1, 4, 24, 24)
-            elif 'MNIST' in dataset_name:
-                dummy_input = torch.zeros(1, 1, 28, 28)
-            else:
-                dummy_input = torch.zeros(1, 3, 224, 224)
-
-            flop_count = [0]
-            hooks = []
-
-            def conv_hook(module, inp, out):
-                b = inp[0].shape[0]
-                c_in = module.in_channels
-                c_out = module.out_channels
-                kH, kW = (module.kernel_size if isinstance(module.kernel_size, tuple)
-                          else (module.kernel_size, module.kernel_size))
-                oH, oW = out.shape[2], out.shape[3]
-                macs = b * c_out * oH * oW * (c_in // module.groups) * kH * kW
-                flop_count[0] += 2 * macs
-
-            def linear_hook(module, inp, out):
-                b = inp[0].numel() // module.in_features
-                flop_count[0] += 2 * b * module.in_features * module.out_features
-
-            model_cpu = self.global_model.cpu()
-            for m in model_cpu.modules():
-                if isinstance(m, nn.Conv2d):
-                    hooks.append(m.register_forward_hook(conv_hook))
-                elif isinstance(m, nn.Linear):
-                    hooks.append(m.register_forward_hook(linear_hook))
-
-            model_cpu.eval()
-            with torch.no_grad():
-                model_cpu(dummy_input)
-
-            for h in hooks:
-                h.remove()
-
-            # Move model back to original device
-            self.global_model.to(self.device)
-
-            flops = flop_count[0]
-            info['flops'] = flops
-            if flops >= 1e9:
-                info['flops_str'] = f"{flops / 1e9:.3f} GFLOPs"
-            elif flops >= 1e6:
-                info['flops_str'] = f"{flops / 1e6:.3f} MFLOPs"
-            else:
-                info['flops_str'] = f"{flops:,} FLOPs"
-        except Exception as exc:
-            info['flops_str'] = f'N/A ({exc})'
-
-        return info
+        self.fl_metrics_tracker.set_model_info(model_info)
 
     def set_clients(self, clientObj):
         for i, train_slow, send_slow in zip(range(self.num_clients), self.train_slow_clients, self.send_slow_clients):
@@ -326,16 +260,6 @@ class Server(object):
                                             for curve_key, curve_value in value.items():
                                                 if isinstance(curve_value, np.ndarray):
                                                     curve_subgroup.create_dataset(curve_key, data=curve_value)
-                                    elif key in ['class_roc_curves', 'class_pr_curves']:
-                                        # Save class-wise curve dicts: class_k -> {curve arrays}
-                                        if value:
-                                            class_group = round_group.create_group(key)
-                                            for class_key, class_curve in value.items():
-                                                if isinstance(class_curve, dict):
-                                                    cg = class_group.create_group(class_key)
-                                                    for curve_key, curve_value in class_curve.items():
-                                                        if isinstance(curve_value, np.ndarray):
-                                                            cg.create_dataset(curve_key, data=curve_value)
                                     elif key in ['roc_curves', 'pr_curves']:
                                         # Skip list of curves for now (too complex)
                                         continue
@@ -346,22 +270,10 @@ class Server(object):
                                         except Exception:
                                             pass
                                 elif isinstance(value, (list, tuple)):
-                                    if key in ('client_roc_curves', 'client_pr_curves'):
-                                        try:
-                                            curves_group = round_group.create_group(key)
-                                            for client_idx, curve in enumerate(value):
-                                                if curve is not None and isinstance(curve, dict):
-                                                    cg = curves_group.create_group(f'client_{client_idx}')
-                                                    for ck, cv in curve.items():
-                                                        if isinstance(cv, np.ndarray):
-                                                            cg.create_dataset(ck, data=cv)
-                                        except Exception:
-                                            pass
-                                    else:
-                                        try:
-                                            round_group.create_dataset(key, data=np.array(value))
-                                        except Exception:
-                                            pass
+                                    try:
+                                        round_group.create_dataset(key, data=np.array(value))
+                                    except Exception:
+                                        pass
                             except Exception as e:
                                 print(f"Warning: Could not save {key}: {e}")
                 
@@ -462,7 +374,7 @@ class Server(object):
 
     def test_metrics_detailed(self):
         """
-        Collect detailed metrics from all clients and aggregate them, including per-class and per-client breakdowns.
+        Collect detailed metrics from all clients and aggregate them.
         
         Returns:
             dict: Aggregated metrics across all clients
@@ -481,28 +393,12 @@ class Server(object):
         
         if not all_detailed_metrics:
             return {}
-
-        client_sample_counts = [float(m.get('test_samples', 0)) for m in all_detailed_metrics]
-        total_weight = float(np.sum(client_sample_counts))
-
-        def weighted_metric(metric_key):
-            vals = [m.get(metric_key, np.nan) for m in all_detailed_metrics]
-            num = 0.0
-            den = 0.0
-            for v, w in zip(vals, client_sample_counts):
-                if isinstance(v, (int, float, np.floating)) and not np.isnan(v) and w > 0:
-                    num += float(v) * float(w)
-                    den += float(w)
-            return (num / den) if den > 0 else np.nan
         
         # Aggregate metrics across clients
         aggregated_metrics = {
             'total_test_samples': total_samples,
             'num_clients': len(all_detailed_metrics),
-            # Accuracy and micro-accuracy should be sample-weighted, not plain client mean.
-            'accuracy': weighted_metric('accuracy'),
-            'accuracy_micro': weighted_metric('accuracy_micro'),
-            'accuracy_macro': np.nanmean([m.get('accuracy_macro', np.nan) for m in all_detailed_metrics if 'accuracy_macro' in m]),
+            'accuracy': np.nanmean([m['accuracy'] for m in all_detailed_metrics if 'accuracy' in m]),
             'f1_macro': np.nanmean([m['f1_macro'] for m in all_detailed_metrics if 'f1_macro' in m]),
             'f1_micro': np.nanmean([m['f1_micro'] for m in all_detailed_metrics if 'f1_micro' in m]),
             'f1_weighted': np.nanmean([m['f1_weighted'] for m in all_detailed_metrics if 'f1_weighted' in m]),
@@ -513,33 +409,22 @@ class Server(object):
             'recall_micro': np.nanmean([m['recall_micro'] for m in all_detailed_metrics if 'recall_micro' in m]),
             'recall_weighted': np.nanmean([m['recall_weighted'] for m in all_detailed_metrics if 'recall_weighted' in m]),
             'sensitivity_macro': np.nanmean([m.get('sensitivity_macro', np.nan) for m in all_detailed_metrics if 'sensitivity_macro' in m]),
-            'sensitivity_micro': np.nanmean([m.get('sensitivity_micro', np.nan) for m in all_detailed_metrics if 'sensitivity_micro' in m]),
             'sensitivity_weighted': np.nanmean([m.get('sensitivity_weighted', np.nan) for m in all_detailed_metrics if 'sensitivity_weighted' in m]),
             'specificity_macro': np.nanmean([m.get('specificity_macro', np.nan) for m in all_detailed_metrics if 'specificity_macro' in m]),
-            'specificity_micro': np.nanmean([m.get('specificity_micro', np.nan) for m in all_detailed_metrics if 'specificity_micro' in m]),
             'specificity_weighted': np.nanmean([m.get('specificity_weighted', np.nan) for m in all_detailed_metrics if 'specificity_weighted' in m]),
             'cohen_kappa': np.nanmean([m['cohen_kappa'] for m in all_detailed_metrics if 'cohen_kappa' in m]),
             'matthews_cc': np.nanmean([m['matthews_cc'] for m in all_detailed_metrics if 'matthews_cc' in m]),
             'auc_roc': np.nanmean([m.get('auc_roc', np.nan) for m in all_detailed_metrics if 'auc_roc' in m]),
             'auc_pr': np.nanmean([m.get('auc_pr', np.nan) for m in all_detailed_metrics if 'auc_pr' in m]),
-            'brier_score': np.nanmean([m.get('brier_score', np.nan) for m in all_detailed_metrics if 'brier_score' in m]),
         }
 
-        # Store per-client metrics
         client_accuracies = [m['accuracy'] for m in all_detailed_metrics if 'accuracy' in m]
         if client_accuracies:
             aggregated_metrics['client_accuracy_by_client'] = client_accuracies
             aggregated_metrics['client_accuracy_mean'] = float(np.nanmean(client_accuracies))
             aggregated_metrics['client_accuracy_variance'] = float(np.nanvar(client_accuracies))
-            
-            # Store other per-client metrics (F1, Precision, Recall, AUC, etc.)
-            for metric_key in ['f1_macro', 'f1_weighted', 'precision_macro', 'recall_macro', 'sensitivity_macro', 'specificity_macro', 'auc_roc', 'auc_pr']:
-                client_values = [m.get(metric_key, np.nan) for m in all_detailed_metrics]
-                valid_values = [v for v in client_values if isinstance(v, (int, float)) and not np.isnan(v)]
-                if valid_values:
-                    aggregated_metrics[f'client_{metric_key}_list'] = client_values
         
-        # Add per-class metrics from aggregated confusion matrix
+        # Add per-class metrics if available
         if any('confusion_matrix' in m for m in all_detailed_metrics):
             try:
                 # Aggregate confusion matrices
@@ -548,61 +433,20 @@ class Server(object):
                     if 'confusion_matrix' in m:
                         cm_total += m['confusion_matrix']
                 aggregated_metrics['confusion_matrix'] = cm_total
-
-                # Prefer global metrics derived from the aggregated confusion matrix.
-                total_cm = float(np.sum(cm_total))
-                if total_cm > 0:
-                    accuracy_micro_global = float(np.trace(cm_total) / total_cm)
-                    aggregated_metrics['accuracy'] = accuracy_micro_global
-                    aggregated_metrics['accuracy_micro'] = accuracy_micro_global
-
-                    row_sums = np.sum(cm_total, axis=1).astype(np.float64)
-                    per_class_recall = np.divide(
-                        np.diag(cm_total).astype(np.float64),
-                        row_sums,
-                        out=np.zeros_like(row_sums, dtype=np.float64),
-                        where=row_sums > 0
-                    )
-                    # Balanced accuracy: mean recall over classes present in evaluation.
-                    valid = row_sums > 0
-                    if np.any(valid):
-                        aggregated_metrics['accuracy_macro'] = float(np.mean(per_class_recall[valid]))
-                
-                # Compute and store per-class metrics from confusion matrix
-                aggregated_metrics['per_class_metrics'] = {}
-                for class_id in range(self.num_classes):
-                    tp = cm_total[class_id, class_id]
-                    fp = cm_total[:, class_id].sum() - tp
-                    fn = cm_total[class_id, :].sum() - tp
-                    
-                    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-                    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-                    f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
-                    support = int(cm_total[class_id, :].sum())
-                    
-                    aggregated_metrics['per_class_metrics'][class_id] = {
-                        'precision': float(precision),
-                        'recall': float(recall),
-                        'f1': float(f1),
-                        'support': support
-                    }
-            except Exception as e:
-                print(f"Warning: Could not aggregate confusion matrices: {e}")
+            except Exception:
+                pass
         
         # Add ROC and PR curves if available
         # Store both individual curves and a representative curve (first valid one)
-        # Also store per-client indexed curves (preserves client ID mapping)
         if any('roc_curve' in m for m in all_detailed_metrics):
             try:
                 roc_curves = [m['roc_curve'] for m in all_detailed_metrics if m.get('roc_curve') is not None]
                 if roc_curves:
-                    # Store the list of all curves (backward-compat, unindexed)
+                    # Store the list of all curves
                     aggregated_metrics['roc_curves'] = roc_curves
                     # Also store the first valid curve for direct plotting
                     if isinstance(roc_curves[0], dict) and 'fpr' in roc_curves[0]:
                         aggregated_metrics['roc_curve'] = roc_curves[0]
-                # Per-client indexed curves (None for clients without curves)
-                aggregated_metrics['client_roc_curves'] = [m.get('roc_curve') for m in all_detailed_metrics]
             except Exception:
                 pass
         
@@ -615,59 +459,8 @@ class Server(object):
                     # Also store the first valid curve for direct plotting
                     if isinstance(pr_curves[0], dict) and 'precision' in pr_curves[0]:
                         aggregated_metrics['pr_curve'] = pr_curves[0]
-                # Per-client indexed curves (None for clients without curves)
-                aggregated_metrics['client_pr_curves'] = [m.get('pr_curve') for m in all_detailed_metrics]
             except Exception:
                 pass
-
-        # Add class-wise ROC/PR curves and class-wise AUC (averaged over clients)
-        try:
-            class_roc_curves = {}
-            class_pr_curves = {}
-            class_auc_roc_by_class = []
-            class_auc_pr_by_class = []
-
-            for class_id in range(self.num_classes):
-                class_key = f'class_{class_id}'
-
-                # Use first available per-class curve as representative for visualization.
-                for m in all_detailed_metrics:
-                    class_roc = m.get('class_roc_curves', {})
-                    if isinstance(class_roc, dict) and class_key in class_roc:
-                        class_roc_curves[class_key] = class_roc[class_key]
-                        break
-
-                for m in all_detailed_metrics:
-                    class_pr = m.get('class_pr_curves', {})
-                    if isinstance(class_pr, dict) and class_key in class_pr:
-                        class_pr_curves[class_key] = class_pr[class_key]
-                        break
-
-                roc_vals = []
-                pr_vals = []
-                for m in all_detailed_metrics:
-                    auc_roc_list = m.get('class_auc_roc_by_class', [])
-                    auc_pr_list = m.get('class_auc_pr_by_class', [])
-                    if isinstance(auc_roc_list, (list, tuple, np.ndarray)) and class_id < len(auc_roc_list):
-                        v = auc_roc_list[class_id]
-                        if isinstance(v, (int, float, np.floating)) and not np.isnan(v):
-                            roc_vals.append(float(v))
-                    if isinstance(auc_pr_list, (list, tuple, np.ndarray)) and class_id < len(auc_pr_list):
-                        v = auc_pr_list[class_id]
-                        if isinstance(v, (int, float, np.floating)) and not np.isnan(v):
-                            pr_vals.append(float(v))
-
-                class_auc_roc_by_class.append(float(np.mean(roc_vals)) if roc_vals else np.nan)
-                class_auc_pr_by_class.append(float(np.mean(pr_vals)) if pr_vals else np.nan)
-
-            if class_roc_curves:
-                aggregated_metrics['class_roc_curves'] = class_roc_curves
-            if class_pr_curves:
-                aggregated_metrics['class_pr_curves'] = class_pr_curves
-            aggregated_metrics['class_auc_roc_by_class'] = class_auc_roc_by_class
-            aggregated_metrics['class_auc_pr_by_class'] = class_auc_pr_by_class
-        except Exception:
-            pass
         
         return aggregated_metrics
 
@@ -707,42 +500,10 @@ class Server(object):
         else:
             loss.append(train_loss)
 
-        print("Averaged Train Loss: {:.4f}".format(train_loss))
-        print("Averaged Test Accuracy: {:.4f}".format(test_acc))
-        print("Averaged Test AUC: {:.4f}".format(test_auc))
+        self.rs_test_auc.append(test_auc)
+        print(f"Loss: {train_loss:.4f} | Acc: {test_acc:.4f} | AUC: {test_auc:.4f}")
         
-        # Collect detailed metrics
-        try:
-            detailed_metrics = self.test_metrics_detailed()
-            if detailed_metrics:
-                self.rs_detailed_metrics.append(detailed_metrics)
-                # Print detailed metrics
-                print("\n--- Detailed Metrics ---")
-                print(f"F1-Score (Macro): {detailed_metrics.get('f1_macro', 0):.4f}")
-                print(f"F1-Score (Weighted): {detailed_metrics.get('f1_weighted', 0):.4f}")
-                print(f"Precision (Macro): {detailed_metrics.get('precision_macro', 0):.4f}")
-                print(f"Recall (Macro): {detailed_metrics.get('recall_macro', 0):.4f}")
-                if 'sensitivity_macro' in detailed_metrics:
-                    print(f"Sensitivity (Macro): {detailed_metrics.get('sensitivity_macro', 0):.4f}")
-                if 'specificity_macro' in detailed_metrics:
-                    print(f"Specificity (Macro): {detailed_metrics.get('specificity_macro', 0):.4f}")
-                print(f"Kappa Score: {detailed_metrics.get('cohen_kappa', 0):.4f}")
-                print(f"Matthews CC: {detailed_metrics.get('matthews_cc', 0):.4f}")
-                print(f"AUC-ROC: {detailed_metrics.get('auc_roc', 0):.4f}")
-                print(f"AUC-PR: {detailed_metrics.get('auc_pr', 0):.4f}")
-                _brier = detailed_metrics.get('brier_score', float('nan'))
-                try:
-                    if not np.isnan(float(_brier)):
-                        print(f"Brier Score: {float(_brier):.4f}")
-                except (TypeError, ValueError):
-                    pass
-                if 'client_accuracy_variance' in detailed_metrics:
-                    print(f"Client Accuracy Variance: {detailed_metrics.get('client_accuracy_variance', 0):.6f}")
-        except Exception as e:
-            print(f"Error collecting detailed metrics: {e}")
-        # self.print_(test_acc, train_acc, train_loss)
-        print("Std Test Accuracy: {:.4f}".format(np.std(accs)))
-        print("Std Test AUC: {:.4f}".format(np.std(aucs)))
+        
 
     def print_(self, test_acc, test_auc, train_loss):
         print("Average Test Accuracy: {:.4f}".format(test_acc))

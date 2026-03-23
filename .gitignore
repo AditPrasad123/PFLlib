@@ -5,4 +5,6 @@
 /dataset/ISIC2019_quanv
 /system/centralized_train.py
 /system/notes.md
+*.pt
+*.pth
 /system/centralized

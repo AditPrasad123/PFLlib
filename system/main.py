@@ -57,9 +57,7 @@ from flcore.trainmodel.resnet import *
 from flcore.trainmodel.alexnet import *
 from flcore.trainmodel.mobilenet_v2 import *
 from flcore.trainmodel.transformer import *
-from efficientnet_b0_kernel import EfficientNetB0KernelFedBABU
-from quanv_efficientnet_b0 import QuanvEfficientNetB0, QuanvEfficientNetB0Improved, QuanvEfficientNetB0Advanced
-from quanv_tinyvit import QuanvTinyViT, QuanvTinyViTImproved, QuanvTinyViTAdvanced
+from SkinLesionModel import SkinLesionModel
 from utils.result_utils import average_data
 from utils.mem_utils import MemReporter
 
@@ -120,20 +118,23 @@ def run(args):
             else:
                 args.model = DNN(60, 20, num_classes=args.num_classes).to(args.device)
         
-        
-        elif model_str == "QuanvEfficientNetB0":
-            args.model = QuanvEfficientNetB0Improved(
-                num_classes=args.num_classes, 
-                pretrained=True, 
-                improvement_level='standard'  # Use the improved version with better performance
-                ).to(args.device)
+        elif model_str == "SkinLesionModel":
+            args.model = SkinLesionModel(num_classes=args.num_classes).to(args.device)
 
-        elif model_str == "QuanvTinyViT":
-            args.model = QuanvTinyViTImproved(
-                num_classes=args.num_classes,
-                pretrained=True,
-                improvement_level='standard'  # Use the improved version with better performance
-            ).to(args.device)
+        # elif model_str == "QuanvEfficientNetB0":
+        #     print("Jii")
+        #     args.model = QuanvEfficientNetB0Improved(
+        #         num_classes=args.num_classes, 
+        #         pretrained=True, 
+        #         improvement_level='qlstm'  # Use the improved version with better performance
+        #         ).to(args.device)
+
+        # elif model_str == "QuanvTinyViT":
+        #     args.model = QuanvTinyViTImproved(
+        #         num_classes=args.num_classes,
+        #         pretrained=True,
+        #         improvement_level='improved'  # Use the improved version with better performance
+        #     ).to(args.device)
             
         elif model_str == "ResNet18":
             args.model = torchvision.models.resnet18(pretrained=True).to(args.device)
@@ -183,14 +184,6 @@ def run(args):
             model.fc = nn.Linear(in_features, args.num_classes)
 
             args.model = model.to(args.device)
-
-        elif model_str == "EfficientNetB0Kernel":
-            args.model = EfficientNetB0KernelFedBABU(
-                num_classes=args.num_classes,
-                pretrained=True,
-                projection_dim=args.projection_dim,
-                embedding_dim=args.embedding_dim,
-            ).to(args.device)
 
         elif model_str == "TinyViT":
             # Load the Tiny-ViT model hosted on Hugging Face via timm
@@ -377,7 +370,7 @@ def run(args):
 
         elif args.algorithm == "FedBABU":
             # Skip BaseHeadSplit wrapping for models that already have internal base/head split
-            if model_str not in ["QuanvTinyViT", "QuanvEfficientNetB0", "EfficientNetB0Kernel"]:
+            if model_str not in ["QuanvTinyViT", "QuanvEfficientNetB0"]:
                 args.head = copy.deepcopy(args.model.fc)
                 args.model.fc = nn.Identity()
                 args.model = BaseHeadSplit(args.model, args.head)
