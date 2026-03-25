@@ -13,7 +13,7 @@ from utils.result_utils import (
     plot_client_roc_pr_curves,
 )
 
-file_name = 'ISIC2019_FedBABU_EfficientNetB0Kernel_test_0'
+file_name = 'ISIC2019_quanv_FedAvg_QuanvEfficientNetB0_test_0'
 output_dir = os.path.join('..', 'results', f'{file_name}_plots')
 os.makedirs(output_dir, exist_ok=True)
 

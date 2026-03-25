@@ -301,9 +301,11 @@ def run(args):
 
         # select algorithm
         if args.algorithm == "FedAvg":
-            args.head = copy.deepcopy(args.model.fc)
-            args.model.fc = nn.Identity()
-            args.model = BaseHeadSplit(args.model, args.head)
+            # Models with built-in base/head split should not be wrapped again.
+            if model_str not in ["QuanvTinyViT", "QuanvEfficientNetB0", "EfficientNetB0Kernel"]:
+                args.head = copy.deepcopy(args.model.fc)
+                args.model.fc = nn.Identity()
+                args.model = BaseHeadSplit(args.model, args.head)
             server = FedAvg(args, i)
 
         elif args.algorithm == "Local":
