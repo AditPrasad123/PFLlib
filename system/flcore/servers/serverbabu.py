@@ -1,5 +1,7 @@
 import time
 import random
+import os
+import torch
 from flcore.clients.clientbabu import clientBABU
 from flcore.servers.serverbase import Server
 from threading import Thread
@@ -18,6 +20,17 @@ class FedBABU(Server):
 
         # self.load_model()
         self.Budget = []
+
+    def save_personalized_client_models(self):
+        """Save full personalized client models (base + head) for explainability analysis."""
+        base_dir = os.path.join("models", self.dataset, "FedBABU_personalized_clients", f"run_{self.times}")
+        os.makedirs(base_dir, exist_ok=True)
+
+        for client in self.clients:
+            file_path = os.path.join(base_dir, f"client_{client.id}.pt")
+            torch.save(client.model, file_path)
+
+        print(f"Saved personalized client models to: {base_dir}")
 
 
     def train(self):
@@ -88,6 +101,8 @@ class FedBABU(Server):
             self.fl_metrics_tracker.set_personalization_metrics(
                 baseline_acc, personalized_acc
             )
+
+        self.save_personalized_client_models()
         
         # Print FL metrics summary
         print("\n" + "="*50)
