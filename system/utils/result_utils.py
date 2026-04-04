@@ -678,16 +678,16 @@ def plot_class_roc_pr_curves(file_name, round_num=-1, save_path=None):
     cmap = plt.cm.get_cmap('tab20', n_classes)
 
     fig, axes = plt.subplots(1, 2, figsize=(16, 7))
-    fig.suptitle(f'Class-wise ROC/PR Curves - {round_key}', fontsize=14, fontweight='bold')
+    fig.suptitle(f'Class-wise ROC/PR Curves - {round_key}', fontsize=16, fontweight='bold')
 
     # ROC per class
     ax_roc = axes[0]
-    ax_roc.plot([0, 1], [0, 1], 'k--', lw=1, label='Random')
+    ax_roc.plot([0, 1], [0, 1], 'k--', lw=2, label='Random')
     for i, (class_name, curve_data) in enumerate(roc_items):
         if not isinstance(curve_data, dict) or 'fpr' not in curve_data or 'tpr' not in curve_data:
             continue
-        label = class_name
         class_idx = int(class_name.split('_')[1]) if '_' in class_name else i
+        label = f'Class {class_idx}'
         if isinstance(class_auc_roc, list) and class_idx < len(class_auc_roc):
             try:
                 auc_val = float(class_auc_roc[class_idx])
@@ -695,23 +695,23 @@ def plot_class_roc_pr_curves(file_name, round_num=-1, save_path=None):
                     label += f' (AUC={auc_val:.3f})'
             except (TypeError, ValueError):
                 pass
-        ax_roc.plot(np.array(curve_data['fpr']), np.array(curve_data['tpr']), color=cmap(i), lw=1.8, label=label)
+        ax_roc.plot(np.array(curve_data['fpr']), np.array(curve_data['tpr']), color=cmap(i), lw=2.2, label=label)
 
-    ax_roc.set_title('ROC Curves per Class', fontsize=12, fontweight='bold')
-    ax_roc.set_xlabel('False Positive Rate', fontsize=11)
-    ax_roc.set_ylabel('True Positive Rate', fontsize=11)
+    ax_roc.set_title('ROC Curves per Class', fontsize=14, fontweight='bold')
+    ax_roc.set_xlabel('False Positive Rate', fontsize=13)
+    ax_roc.set_ylabel('True Positive Rate', fontsize=13)
     ax_roc.set_xlim([0.0, 1.0])
     ax_roc.set_ylim([0.0, 1.05])
     ax_roc.grid(True, alpha=0.3)
-    ax_roc.legend(fontsize=8, loc='lower right', ncol=2 if n_classes > 12 else 1)
+    ax_roc.legend(fontsize=11, loc='lower right', ncol=2 if n_classes > 12 else 1)
 
     # PR per class
     ax_pr = axes[1]
     for i, (class_name, curve_data) in enumerate(pr_items):
         if not isinstance(curve_data, dict) or 'precision' not in curve_data or 'recall' not in curve_data:
             continue
-        label = class_name
         class_idx = int(class_name.split('_')[1]) if '_' in class_name else i
+        label = f'Class {class_idx}'
         if isinstance(class_auc_pr, list) and class_idx < len(class_auc_pr):
             try:
                 auc_val = float(class_auc_pr[class_idx])
@@ -719,15 +719,15 @@ def plot_class_roc_pr_curves(file_name, round_num=-1, save_path=None):
                     label += f' (AUC={auc_val:.3f})'
             except (TypeError, ValueError):
                 pass
-        ax_pr.plot(np.array(curve_data['recall']), np.array(curve_data['precision']), color=cmap(i), lw=1.8, label=label)
+        ax_pr.plot(np.array(curve_data['recall']), np.array(curve_data['precision']), color=cmap(i), lw=2.2, label=label)
 
-    ax_pr.set_title('PR Curves per Class', fontsize=12, fontweight='bold')
-    ax_pr.set_xlabel('Recall', fontsize=11)
-    ax_pr.set_ylabel('Precision', fontsize=11)
+    ax_pr.set_title('PR Curves per Class', fontsize=14, fontweight='bold')
+    ax_pr.set_xlabel('Recall', fontsize=13)
+    ax_pr.set_ylabel('Precision', fontsize=13)
     ax_pr.set_xlim([0.0, 1.0])
     ax_pr.set_ylim([0.0, 1.05])
     ax_pr.grid(True, alpha=0.3)
-    ax_pr.legend(fontsize=8, loc='best', ncol=2 if n_classes > 12 else 1)
+    ax_pr.legend(fontsize=11, loc='best', ncol=2 if n_classes > 12 else 1)
 
     plt.tight_layout()
     if save_path:
@@ -979,11 +979,11 @@ def plot_client_roc_pr_curves(file_name, round_num=-1, save_path=None):
     cmap = plt.cm.get_cmap('tab20', n_clients)
 
     fig, axes = plt.subplots(1, 2, figsize=(16, 7))
-    fig.suptitle(f'Client-wise ROC/PR Curves - {round_key}', fontsize=14, fontweight='bold')
+    fig.suptitle(f'Client-wise ROC/PR Curves - {round_key}', fontsize=16, fontweight='bold')
 
     # ROC panel
     ax_roc = axes[0]
-    ax_roc.plot([0, 1], [0, 1], 'k--', lw=1, label='Random')
+    ax_roc.plot([0, 1], [0, 1], 'k--', lw=2, label='Random')
     for i, (client_name, curve_data) in enumerate(roc_items):
         if not isinstance(curve_data, dict) or 'fpr' not in curve_data or 'tpr' not in curve_data:
             continue
@@ -995,15 +995,15 @@ def plot_client_roc_pr_curves(file_name, round_num=-1, save_path=None):
                     label += f' (AUC={val:.3f})'
             except (TypeError, ValueError):
                 pass
-        ax_roc.plot(np.array(curve_data['fpr']), np.array(curve_data['tpr']), color=cmap(i), lw=1.8, label=label)
+        ax_roc.plot(np.array(curve_data['fpr']), np.array(curve_data['tpr']), color=cmap(i), lw=2.2, label=label)
 
-    ax_roc.set_title('ROC Curves per Client', fontsize=12, fontweight='bold')
-    ax_roc.set_xlabel('False Positive Rate', fontsize=11)
-    ax_roc.set_ylabel('True Positive Rate', fontsize=11)
+    ax_roc.set_title('ROC Curves per Client', fontsize=14, fontweight='bold')
+    ax_roc.set_xlabel('False Positive Rate', fontsize=13)
+    ax_roc.set_ylabel('True Positive Rate', fontsize=13)
     ax_roc.set_xlim([0.0, 1.0])
     ax_roc.set_ylim([0.0, 1.05])
     ax_roc.grid(True, alpha=0.3)
-    ax_roc.legend(fontsize=8, loc='lower right', ncol=2 if n_clients > 12 else 1)
+    ax_roc.legend(fontsize=11, loc='lower right', ncol=2 if n_clients > 12 else 1)
 
     # PR panel
     ax_pr = axes[1]
@@ -1018,15 +1018,15 @@ def plot_client_roc_pr_curves(file_name, round_num=-1, save_path=None):
                     label += f' (AUC={val:.3f})'
             except (TypeError, ValueError):
                 pass
-        ax_pr.plot(np.array(curve_data['recall']), np.array(curve_data['precision']), color=cmap(i), lw=1.8, label=label)
+        ax_pr.plot(np.array(curve_data['recall']), np.array(curve_data['precision']), color=cmap(i), lw=2.2, label=label)
 
-    ax_pr.set_title('PR Curves per Client', fontsize=12, fontweight='bold')
-    ax_pr.set_xlabel('Recall', fontsize=11)
-    ax_pr.set_ylabel('Precision', fontsize=11)
+    ax_pr.set_title('PR Curves per Client', fontsize=14, fontweight='bold')
+    ax_pr.set_xlabel('Recall', fontsize=13)
+    ax_pr.set_ylabel('Precision', fontsize=13)
     ax_pr.set_xlim([0.0, 1.0])
     ax_pr.set_ylim([0.0, 1.05])
     ax_pr.grid(True, alpha=0.3)
-    ax_pr.legend(fontsize=8, loc='best', ncol=2 if n_clients > 12 else 1)
+    ax_pr.legend(fontsize=11, loc='best', ncol=2 if n_clients > 12 else 1)
 
     plt.tight_layout()
     if save_path:
@@ -1090,12 +1090,12 @@ def plot_roc_and_pr_curves(file_name, round_num=-1, save_path=None):
         if isinstance(roc_curve_data, dict) and 'fpr' in roc_curve_data and 'tpr' in roc_curve_data:
             fpr = roc_curve_data['fpr']
             tpr = roc_curve_data['tpr']
-            ax1.plot(fpr, tpr, color='darkorange', lw=2.5, label=f'ROC (AUC = {metrics_dict.get("auc_roc", 0):.4f})')
-            ax1.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--', label='Random Classifier')
-            ax1.set_xlabel('False Positive Rate', fontsize=11)
-            ax1.set_ylabel('True Positive Rate', fontsize=11)
-            ax1.set_title('ROC Curve', fontsize=12, fontweight='bold')
-            ax1.legend(fontsize=10, loc='lower right')
+            ax1.plot(fpr, tpr, color='darkorange', lw=2.8, label=f'ROC (AUC = {metrics_dict.get("auc_roc", 0):.4f})')
+            ax1.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--', label='Random')
+            ax1.set_xlabel('False Positive Rate', fontsize=13)
+            ax1.set_ylabel('True Positive Rate', fontsize=13)
+            ax1.set_title('ROC Curve', fontsize=14, fontweight='bold')
+            ax1.legend(fontsize=12, loc='lower right')
             ax1.grid(True, alpha=0.3)
             ax1.set_xlim([0.0, 1.0])
             ax1.set_ylim([0.0, 1.05])
@@ -1111,11 +1111,11 @@ def plot_roc_and_pr_curves(file_name, round_num=-1, save_path=None):
         if isinstance(pr_curve_data, dict) and 'precision' in pr_curve_data and 'recall' in pr_curve_data:
             precision = pr_curve_data['precision']
             recall = pr_curve_data['recall']
-            ax2.plot(recall, precision, color='darkgreen', lw=2.5, label=f'PR (AUC = {metrics_dict.get("auc_pr", 0):.4f})')
-            ax2.set_xlabel('Recall', fontsize=11)
-            ax2.set_ylabel('Precision', fontsize=11)
-            ax2.set_title('Precision-Recall Curve', fontsize=12, fontweight='bold')
-            ax2.legend(fontsize=10, loc='best')
+            ax2.plot(recall, precision, color='darkgreen', lw=2.8, label=f'PR (AUC = {metrics_dict.get("auc_pr", 0):.4f})')
+            ax2.set_xlabel('Recall', fontsize=13)
+            ax2.set_ylabel('Precision', fontsize=13)
+            ax2.set_title('Precision-Recall Curve', fontsize=14, fontweight='bold')
+            ax2.legend(fontsize=12, loc='best')
             ax2.grid(True, alpha=0.3)
             ax2.set_xlim([0.0, 1.0])
             ax2.set_ylim([0.0, 1.05])
@@ -1149,9 +1149,9 @@ def plot_roc_and_pr_curves(file_name, round_num=-1, save_path=None):
                 text = ax3.text(j, i, int(value),
                               ha="center", va="center", color=text_color, fontweight='bold', fontsize=10)
         
-        ax3.set_xlabel('Predicted Label', fontsize=11)
-        ax3.set_ylabel('True Label', fontsize=11)
-        ax3.set_title('Confusion Matrix', fontsize=12, fontweight='bold')
+        ax3.set_xlabel('Predicted Label', fontsize=13)
+        ax3.set_ylabel('True Label', fontsize=13)
+        ax3.set_title('Confusion Matrix', fontsize=14, fontweight='bold')
         ax3.set_xticks(np.arange(num_classes))
         ax3.set_yticks(np.arange(num_classes))
         plt.colorbar(im, ax=ax3)
@@ -1218,11 +1218,11 @@ def plot_roc_and_pr_curves(file_name, round_num=-1, save_path=None):
         except (TypeError, ValueError):
             pass
     
-    ax4.text(0.05, 0.95, summary_text, transform=ax4.transAxes, fontsize=10,
+    ax4.text(0.05, 0.95, summary_text, transform=ax4.transAxes, fontsize=11,
             verticalalignment='top', fontfamily='monospace',
             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
     
-    plt.suptitle(f'Model Performance Evaluation - {round_key}', fontsize=14, fontweight='bold', y=0.995)
+    plt.suptitle(f'Model Performance Evaluation - {round_key}', fontsize=16, fontweight='bold', y=0.995)
     
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
