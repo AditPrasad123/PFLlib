@@ -8,8 +8,7 @@ from torchvision.models import efficientnet_b0
 from vqc_head_improved import (
     VQCHead, 
     VQCHeadImproved, 
-    VQCHeadAdvanced,
-    MultiHeadVQCBlock
+    VQCHeadAdvanced
 )
 
 
