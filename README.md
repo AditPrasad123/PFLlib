@@ -79,17 +79,24 @@ This project includes the following types of analysis outputs:
 
 ## How to Run
 
+Clone the repository and move into the project folder first:
+
+```cmd
+git clone https://github.com/AditPrasad123/PFLlib.git
+cd PFLlib
+```
+
 Example command for the quantum-enhanced federated run:
 
 ```cmd
-cd PFLlib/system 
+cd system 
 python main.py -data ISIC2019_quanv -m QuanvEfficientNetB0 -algo FedBABU -gr 20 -ls 2 -lbs 16 -fb True -lr 0.001 -fte 10 -dev cuda
 ```
 
 Example command for the centralized quantum-enhanced run:
 
 ```cmd
-cd PFLlib/system/centralized
+cd system/centralized
 python quanv_efficientnetb0.py
 ```
 
