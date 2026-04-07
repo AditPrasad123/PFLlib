@@ -86,11 +86,46 @@ git clone https://github.com/AditPrasad123/PFLlib.git
 cd PFLlib
 ```
 
-Example command for the quantum-enhanced federated run:
+Command for the quantum-enhanced FedBABU federated run:
 
 ```cmd
 cd system 
 python main.py -data ISIC2019_quanv -m QuanvEfficientNetB0 -algo FedBABU -gr 20 -ls 2 -lbs 16 -fb True -lr 0.001 -fte 10 -dev cuda
+```
+
+Command for the quantum-enhanced FedAvg federated run:
+
+```cmd
+cd system 
+python main.py -data ISIC2019_quanv -m QuanvEfficientNetB0 -algo FedAvg -gr 20 -ls 2 -lbs 16 -fb True -lr 0.001 -fte 10 -dev cuda
+```
+
+Command for the quantum-enhanced FedProx federated run:
+
+```cmd
+cd system 
+python main.py -data ISIC2019_quanv -m QuanvEfficientNetB0 -algo FedProx -gr 20 -ls 2 -lbs 16 -lr 0.001 -mu 0.01 -dev cuda
+```
+
+Command for the quantum-enhanced FedBABU federated run with ViT:
+
+```cmd
+cd system 
+python main.py -data ISIC2019_quanv -m QuanvTinyViT -algo FedBABU -gr 20 -ls 2 -lbs 16 -fb True -lr 0.001 -fte 10 -dev cuda
+```
+
+Command for the classical FedBABU federated run:
+
+```cmd
+cd system 
+python main.py -data ISIC2019 -m EfficientNetB0 -algo FedBABU -gr 20 -ls 2 -lbs 16 -fb True -lr 0.001 -fte 10 -dev cuda
+```
+
+Command for the FedBABU federated run with ViT model:
+
+```cmd
+cd system 
+python main.py -data ISIC2019 -m TinyViT -algo FedBABU -gr 20 -ls 2 -lbs 16 -fb True -lr 0.001 -fte 10 -dev cuda
 ```
 
 Example command for the centralized quantum-enhanced run:
@@ -99,6 +134,45 @@ Example command for the centralized quantum-enhanced run:
 cd system/centralized
 python quanv_efficientnetb0.py
 ```
+
+Example command for the centralized quantum-enhanced run with ViT:
+
+```cmd
+cd system/centralized
+python tinyvit.py
+```
+
+Example command for the centralized classical run:
+
+```cmd
+cd system/centralized
+python efficientnetb0.py
+```
+
+Example command for the centralized classical run with ViT:
+
+```cmd
+cd system/centralized
+python tinyvit.py
+```
+
+### Viewing Results for Federated Models
+
+After model training is completed. Execute the following command to view the results and other metrics.
+
+```cmd
+cd system
+```
+
+In line 16 of results.py file change the value of'file_name' variable to store the name of the desired trained model as present in PFLlib/results folder. Then execute the following command.
+
+```cmd
+python results.py
+```
+
+### Viewing Results for Centralized Models
+
+The results are automatically saved in a dedicated model-wise outputs folder under the PFLlib/system/centralized directory.
 
 ## Project Structure
 
