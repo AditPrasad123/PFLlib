@@ -158,13 +158,12 @@ python tinyvit.py
 
 ### Viewing Results for Federated Models
 
-After model training is completed. Execute the following command to view the results and other metrics.
-
+After model training is completed. Execute the following command.
 ```cmd
 cd system
 ```
 
-In line 16 of results.py file change the value of'file_name' variable to store the name of the desired trained model as present in PFLlib/results folder. Then execute the following command.
+In line 16 of results.py file change the value of 'file_name' variable to store the name of the desired trained model as present in PFLlib/results folder. Then execute the following command.
 
 ```cmd
 python results.py
