@@ -156,6 +156,30 @@ cd system/centralized
 python tinyvit.py
 ```
 
+## Grad-CAM Usage
+
+The Grad-CAM scripts support original-image overlays and filtering to only correctly classified samples with confidence above 0.7.
+
+### Federated Grad-CAM
+
+Run this from the `system` folder:
+
+```cmd
+python analysis/gradcam_fedbabu_personalized_clients.py --dataset ISIC2019_quanv --run_id 4 --overlay_on_original --only_correct --min_confidence 0.7
+```
+
+This generates Grad-CAM outputs for the personalized FedBABU client checkpoints and maps the heatmaps back to the original RGB image space when available.
+
+### Centralized Grad-CAM
+
+Run this from the `system` folder:
+
+```cmd
+python centralized/gradcam_quanv_efficientnetb0.py --dataset ISIC2019_quanv --only_correct --min_confidence 0.7 --overlay_on_original
+```
+
+This generates Grad-CAM outputs for the centralized QuanvEfficientNetB0 model and overlays the mapped heatmaps on the original image.
+
 ### Viewing Results for Federated Models
 
 After model training is completed. Execute the following command.
