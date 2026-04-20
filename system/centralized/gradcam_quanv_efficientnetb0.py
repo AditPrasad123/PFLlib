@@ -9,6 +9,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import cv2
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SYSTEM_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
@@ -37,6 +38,17 @@ def parse_args():
     parser.add_argument("--only_correct", action="store_true")
     parser.add_argument("--min_confidence", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--overlay_on_original",
+        action="store_true",
+        help="Map quanv-space CAM to original ISIC image and overlay there.",
+    )
+    parser.add_argument(
+        "--original_dataset_dir",
+        type=str,
+        default="",
+        help="Path to dataset root that contains ISIC2019/train and ISIC2019/test.",
+    )
     parser.add_argument(
         "--output_dir",
         type=str,
@@ -107,6 +119,46 @@ def apply_colormap(cam_2d):
 def overlay_heatmap(image_rgb, cam_2d, alpha=0.45):
     heat = apply_colormap(cam_2d)
     return np.clip((1.0 - alpha) * image_rgb + alpha * heat, 0.0, 1.0)
+
+
+def normalize_rgb_image(img):
+    arr = np.asarray(img)
+    if arr.ndim != 3 or arr.shape[2] < 3:
+        return None
+    arr = arr[..., :3].astype(np.float32)
+    if arr.max() > 1.0:
+        arr = arr / 255.0
+    return np.clip(arr, 0.0, 1.0)
+
+
+def map_cam_to_original_image(cam_2d, original_hw):
+    # CAM is produced in quanv input space (24x24). Map to preprocessing size (48x48)
+    # and then to original image resolution for visualization.
+    cam_48 = cv2.resize(cam_2d, (48, 48), interpolation=cv2.INTER_LINEAR)
+    h, w = original_hw
+    cam_orig = cv2.resize(cam_48, (w, h), interpolation=cv2.INTER_LINEAR)
+    if np.max(cam_orig) > np.min(cam_orig):
+        cam_orig = (cam_orig - np.min(cam_orig)) / (np.max(cam_orig) - np.min(cam_orig))
+    else:
+        cam_orig = np.zeros_like(cam_orig)
+    return cam_orig
+
+
+def load_original_rgb(client_id, sample_index, dataset_root, cache, split="test"):
+    key = (client_id, split)
+    if key not in cache:
+        npz_path = os.path.join(dataset_root, "ISIC2019", split, f"{client_id}.npz")
+        if not os.path.exists(npz_path):
+            cache[key] = None
+        else:
+            data = np.load(npz_path, allow_pickle=True)
+            cache[key] = data["data"].item().get("x", None)
+
+    images = cache.get(key, None)
+    if images is None or sample_index < 0 or sample_index >= len(images):
+        return None
+
+    return normalize_rgb_image(images[sample_index])
 
 
 def collect_predictions(model, dataset, batch_size, device):
@@ -251,7 +303,16 @@ def gradcam_for_sample(model, target_layer, x_single, class_idx, device):
     return cam, pred, conf
 
 
-def save_outputs(model, target_layer, selected, output_dir, device):
+def save_outputs(
+    model,
+    target_layer,
+    selected,
+    output_dir,
+    device,
+    overlay_on_original=False,
+    original_dataset_dir=None,
+    original_cache=None,
+):
     os.makedirs(output_dir, exist_ok=True)
     image_dir = os.path.join(output_dir, "images")
     os.makedirs(image_dir, exist_ok=True)
@@ -270,7 +331,27 @@ def save_outputs(model, target_layer, selected, output_dir, device):
         )
 
         rgb = tensor_to_pseudorgb(x)
-        ov = overlay_heatmap(rgb, cam)
+        cam_vis = cam
+        input_title = "Input (pseudo-RGB)"
+        cam_title = "Grad-CAM"
+        domain = "quanv_pseudo_rgb"
+
+        if overlay_on_original and original_dataset_dir and original_cache is not None:
+            rgb_original = load_original_rgb(
+                client_id=item["client_id"],
+                sample_index=item["sample_index"],
+                dataset_root=original_dataset_dir,
+                cache=original_cache,
+                split="test",
+            )
+            if rgb_original is not None:
+                rgb = rgb_original
+                cam_vis = map_cam_to_original_image(cam, rgb.shape[:2])
+                input_title = "Input (original RGB)"
+                cam_title = "Grad-CAM (mapped)"
+                domain = "original_rgb_mapped"
+
+        ov = overlay_heatmap(rgb, cam_vis)
         fn_flag = int(t != p)
 
         fname = f"{i:04d}_client{item['client_id']}_idx{item['sample_index']}_t{t}_p{p}_fn{fn_flag}.png"
@@ -278,11 +359,11 @@ def save_outputs(model, target_layer, selected, output_dir, device):
 
         fig, axes = plt.subplots(1, 3, figsize=(13, 4.6), constrained_layout=True)
         axes[0].imshow(rgb)
-        axes[0].set_title("Input (pseudo-RGB)", fontsize=14, pad=12)
+        axes[0].set_title(input_title, fontsize=14, pad=12)
         axes[0].axis("off")
 
-        axes[1].imshow(cam, cmap="jet")
-        axes[1].set_title("Grad-CAM", fontsize=14, pad=12)
+        axes[1].imshow(cam_vis, cmap="jet")
+        axes[1].set_title(cam_title, fontsize=14, pad=12)
         axes[1].axis("off")
 
         axes[2].imshow(ov)
@@ -301,6 +382,7 @@ def save_outputs(model, target_layer, selected, output_dir, device):
                 "pred_label": p,
                 "confidence": conf,
                 "is_false_negative": fn_flag,
+                "visualization_domain": domain,
             }
         )
 
@@ -308,7 +390,16 @@ def save_outputs(model, target_layer, selected, output_dir, device):
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(
             f,
-            fieldnames=["file", "client_id", "sample_index", "true_label", "pred_label", "confidence", "is_false_negative"],
+            fieldnames=[
+                "file",
+                "client_id",
+                "sample_index",
+                "true_label",
+                "pred_label",
+                "confidence",
+                "is_false_negative",
+                "visualization_domain",
+            ],
         )
         writer.writeheader()
         writer.writerows(manifest)
@@ -324,6 +415,12 @@ def main():
 
     checkpoint = os.path.abspath(args.checkpoint)
     output_dir = os.path.abspath(args.output_dir)
+    original_dataset_dir = (
+        os.path.abspath(args.original_dataset_dir)
+        if args.original_dataset_dir
+        else os.path.abspath(os.path.join(SYSTEM_DIR, "..", "dataset"))
+    )
+    original_cache = {}
 
     if not os.path.exists(checkpoint):
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint}")
@@ -363,6 +460,9 @@ def main():
         selected=selected,
         output_dir=output_dir,
         device=device,
+        overlay_on_original=args.overlay_on_original,
+        original_dataset_dir=original_dataset_dir,
+        original_cache=original_cache,
     )
 
     total = len(records)
@@ -372,6 +472,11 @@ def main():
     print(f"False negatives in evaluated set: {fn_count}")
     print(f"Saved Grad-CAM samples: {len(selected)}")
     print(f"Outputs saved to: {output_dir}")
+    if args.overlay_on_original:
+        print(
+            "Note: CAM was computed on quanv tensors and mapped back to original image coordinates "
+            "using the preprocessing geometry (24x24 -> 48x48 -> original size)."
+        )
 
 
 if __name__ == "__main__":
