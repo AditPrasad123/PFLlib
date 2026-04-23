@@ -180,6 +180,16 @@ python centralized/gradcam_quanv_efficientnetb0.py --dataset ISIC2019_quanv --on
 
 This generates Grad-CAM outputs for the centralized QuanvEfficientNetB0 model and overlays the mapped heatmaps on the original image.
 
+### Centralized Classical Grad-CAM
+
+Run this from the `system` folder:
+
+```cmd
+python centralized/gradcam_efficientnetb0.py --dataset ISIC2019 --only_correct --min_confidence 0.7 --overlay_on_original
+```
+
+This generates Grad-CAM outputs for the centralized EfficientNetB0 model on ISIC2019 and overlays the heatmaps on the denormalized RGB input.
+
 ### Viewing Results for Federated Models
 
 After model training is completed. Execute the following command.

@@ -67,10 +67,18 @@ def default_paths(dataset, run_id):
 
 
 def find_target_conv_layer(model):
-    if hasattr(model, "base") and isinstance(model.base, nn.Sequential) and len(model.base) > 0:
-        feature_backbone = model.base[0]
-    else:
-        raise RuntimeError("Could not locate feature backbone at model.base[0].")
+    if not hasattr(model, "base"):
+        raise RuntimeError("Could not locate a base backbone on the loaded model.")
+
+    feature_backbone = model.base
+
+    # Quanv models store the backbone inside a Sequential wrapper.
+    if isinstance(feature_backbone, nn.Sequential) and len(feature_backbone) > 0:
+        feature_backbone = feature_backbone[0]
+    # Classical FedBABU checkpoints wrap a torchvision EfficientNetB0 inside BaseHeadSplit.
+    # That backbone exposes .features directly instead of being indexable.
+    elif hasattr(feature_backbone, "features"):
+        feature_backbone = feature_backbone.features
 
     conv_layers = [m for m in feature_backbone.modules() if isinstance(m, nn.Conv2d)]
     if not conv_layers:
